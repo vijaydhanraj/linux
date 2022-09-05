@@ -20,7 +20,6 @@ struct encl {
 	void *bin;
 	off_t bin_size;
 	void *src;
-	size_t src_size;
 	size_t encl_size;
 	off_t encl_base;
 	unsigned int nr_segments;

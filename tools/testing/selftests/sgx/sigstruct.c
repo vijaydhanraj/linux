@@ -218,13 +218,9 @@ struct mrecreate {
 } __attribute__((__packed__));
 
 
-static bool mrenclave_ecreate(EVP_MD_CTX *ctx, uint64_t blob_size)
+static bool mrenclave_ecreate(EVP_MD_CTX *ctx, uint64_t encl_size)
 {
 	struct mrecreate mrecreate;
-	uint64_t encl_size;
-
-	for (encl_size = 0x1000; encl_size < blob_size; )
-		encl_size <<= 1;
 
 	memset(&mrecreate, 0, sizeof(mrecreate));
 	mrecreate.tag = MRECREATE;
@@ -349,7 +345,7 @@ bool encl_measure(struct encl *encl)
 	if (!ctx)
 		goto err;
 
-	if (!mrenclave_ecreate(ctx, encl->src_size))
+	if (!mrenclave_ecreate(ctx, encl->encl_size))
 		goto err;
 
 	for (i = 0; i < encl->nr_segments; i++) {
