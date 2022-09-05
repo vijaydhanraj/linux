@@ -21,6 +21,7 @@
 #include "../kselftest_harness.h"
 #include "main.h"
 
+static const size_t ENCL_HEAP_SIZE_DEFAULT = PAGE_SIZE;
 static const uint64_t MAGIC = 0x1122334455667788ULL;
 static const uint64_t MAGIC2 = 0x8877665544332211ULL;
 vdso_sgx_enter_enclave_t vdso_sgx_enter_enclave;

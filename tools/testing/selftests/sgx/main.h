@@ -6,8 +6,6 @@
 #ifndef MAIN_H
 #define MAIN_H
 
-#define ENCL_HEAP_SIZE_DEFAULT	4096
-
 struct encl_segment {
 	void *src;
 	off_t offset;
