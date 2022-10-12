@@ -125,7 +125,7 @@ struct sgx_encl_page *sgx_encl_load_page(struct sgx_encl *encl,
 					 unsigned long addr);
 struct sgx_va_page *sgx_encl_grow(struct sgx_encl *encl, bool reclaim);
 void sgx_encl_shrink(struct sgx_encl *encl, struct sgx_va_page *va_page);
-vm_fault_t sgx_encl_eaug_page(struct vm_area_struct *vma,
-			      struct sgx_encl *encl, unsigned long addr);
+int sgx_encl_eaug_page(struct vm_area_struct *vma,
+		       struct sgx_encl *encl, unsigned long addr);
 
 #endif /* _X86_ENCL_H */

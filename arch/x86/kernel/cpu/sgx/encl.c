@@ -299,20 +299,17 @@ struct sgx_encl_page *sgx_encl_load_page(struct sgx_encl *encl,
 }
 
 /**
- * sgx_encl_eaug_page() - Dynamically add page to initialized enclave
- * @vma:	VMA obtained from fault info from where page is accessed
- * @encl:	enclave accessing the page
- * @addr:	address that triggered the page fault
+ * sgx_encl_eaug_page() - Dynamically add an EPC page to initialized enclave
+ * @vma:	the VMA into which the page is to be added
+ * @encl:	the enclave for which the page is to be added
+ * @addr:	the start address of the page to be added
  *
- * When an initialized enclave accesses a page with no backing EPC page
- * on a SGX2 system then the EPC can be added dynamically via the SGX2
- * ENCLS[EAUG] instruction.
- *
- * Returns: Appropriate vm_fault_t: VM_FAULT_NOPAGE when PTE was installed
- * successfully, VM_FAULT_SIGBUS or VM_FAULT_OOM as error otherwise.
+ * Returns: 0 on EAUG success and PTE was installed successfully, -EBUSY for
+ * waiting on reclaimer to free EPC, -ENOMEM for out of RAM, -EFAULT for
+ * all other failures.
  */
-vm_fault_t sgx_encl_eaug_page(struct vm_area_struct *vma,
-			      struct sgx_encl *encl, unsigned long addr)
+int sgx_encl_eaug_page(struct vm_area_struct *vma,
+		       struct sgx_encl *encl, unsigned long addr)
 {
 	vm_fault_t vmret = VM_FAULT_SIGBUS;
 	struct sgx_pageinfo pginfo = {0};
@@ -321,10 +318,10 @@ vm_fault_t sgx_encl_eaug_page(struct vm_area_struct *vma,
 	struct sgx_va_page *va_page;
 	unsigned long phys_addr;
 	u64 secinfo_flags;
-	int ret;
+	int ret = -EFAULT;
 
 	if (!test_bit(SGX_ENCL_INITIALIZED, &encl->flags))
-		return VM_FAULT_SIGBUS;
+		return -EFAULT;
 
 	/*
 	 * Ignore internal permission checking for dynamically added pages.
@@ -335,21 +332,21 @@ vm_fault_t sgx_encl_eaug_page(struct vm_area_struct *vma,
 	secinfo_flags = SGX_SECINFO_R | SGX_SECINFO_W | SGX_SECINFO_X;
 	encl_page = sgx_encl_page_alloc(encl, addr - encl->base, secinfo_flags);
 	if (IS_ERR(encl_page))
-		return VM_FAULT_OOM;
+		return -ENOMEM;
 
 	mutex_lock(&encl->lock);
 
 	epc_page = sgx_alloc_epc_page(encl_page, false);
 	if (IS_ERR(epc_page)) {
 		if (PTR_ERR(epc_page) == -EBUSY)
-			vmret =  VM_FAULT_NOPAGE;
+			ret =  -EBUSY;
 		goto err_out_unlock;
 	}
 
 	va_page = sgx_encl_grow(encl, false);
 	if (IS_ERR(va_page)) {
 		if (PTR_ERR(va_page) == -EBUSY)
-			vmret = VM_FAULT_NOPAGE;
+			ret = -EBUSY;
 		goto err_out_epc;
 	}
 
@@ -362,16 +359,20 @@ vm_fault_t sgx_encl_eaug_page(struct vm_area_struct *vma,
 	 * If ret == -EBUSY then page was created in another flow while
 	 * running without encl->lock
 	 */
-	if (ret)
+	if (ret) {
+		ret = -EFAULT;
 		goto err_out_shrink;
+	}
 
 	pginfo.secs = (unsigned long)sgx_get_epc_virt_addr(encl->secs.epc_page);
 	pginfo.addr = encl_page->desc & PAGE_MASK;
 	pginfo.metadata = 0;
 
 	ret = __eaug(&pginfo, sgx_get_epc_virt_addr(epc_page));
-	if (ret)
+	if (ret) {
+		ret = -EFAULT;
 		goto err_out;
+	}
 
 	encl_page->encl = encl;
 	encl_page->epc_page = epc_page;
@@ -388,10 +389,10 @@ vm_fault_t sgx_encl_eaug_page(struct vm_area_struct *vma,
 	vmret = vmf_insert_pfn(vma, addr, PFN_DOWN(phys_addr));
 	if (vmret != VM_FAULT_NOPAGE) {
 		mutex_unlock(&encl->lock);
-		return VM_FAULT_SIGBUS;
+		return -EFAULT;
 	}
 	mutex_unlock(&encl->lock);
-	return VM_FAULT_NOPAGE;
+	return 0;
 
 err_out:
 	xa_erase(&encl->page_array, PFN_DOWN(encl_page->desc));
@@ -404,7 +405,7 @@ err_out_unlock:
 	mutex_unlock(&encl->lock);
 	kfree(encl_page);
 
-	return vmret;
+	return ret;
 }
 
 static vm_fault_t sgx_vma_fault(struct vm_fault *vmf)
@@ -434,8 +435,18 @@ static vm_fault_t sgx_vma_fault(struct vm_fault *vmf)
 	 * enclave that will be checked for right away.
 	 */
 	if (cpu_feature_enabled(X86_FEATURE_SGX2) &&
-	    (!xa_load(&encl->page_array, PFN_DOWN(addr))))
-		return sgx_encl_eaug_page(vma, encl, addr);
+	    (!xa_load(&encl->page_array, PFN_DOWN(addr)))) {
+		switch (sgx_encl_eaug_page(vma, encl, addr)) {
+		case 0:
+		case -EBUSY:
+			return VM_FAULT_NOPAGE;
+		case -ENOMEM:
+			return VM_FAULT_OOM;
+		case -EFAULT:
+		default:
+			return VM_FAULT_SIGBUS;
+		}
+	}
 
 	mutex_lock(&encl->lock);
 

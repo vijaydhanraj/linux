@@ -2,6 +2,7 @@
 /*  Copyright(c) 2016-20 Intel Corporation. */
 
 #include <linux/acpi.h>
+#include <linux/fadvise.h>
 #include <linux/miscdevice.h>
 #include <linux/mman.h>
 #include <linux/security.h>
@@ -9,6 +10,7 @@
 #include <asm/traps.h>
 #include "driver.h"
 #include "encl.h"
+#include "encls.h"
 
 u64 sgx_attributes_reserved_mask;
 u64 sgx_xfrm_reserved_mask = ~0x3;
@@ -97,8 +99,79 @@ static int sgx_mmap(struct file *file, struct vm_area_struct *vma)
 	vma->vm_ops = &sgx_vm_ops;
 	vma->vm_flags |= VM_PFNMAP | VM_DONTEXPAND | VM_DONTDUMP | VM_IO;
 	vma->vm_private_data = encl;
+	vma->vm_pgoff = PFN_DOWN(vma->vm_start - encl->base);
 
 	return 0;
+}
+
+/*
+ * Add new pages to the enclave sequentially with ENCLS[EAUG] for the WILLNEED advice.
+ * Only do this to existing VMAs in the same enclave and reject the request otherwise.
+ */
+static int sgx_fadvise(struct file *file, loff_t offset, loff_t len, int advice)
+{
+	struct sgx_encl *encl = file->private_data;
+	unsigned long start = offset + encl->base;
+	struct vm_area_struct *vma = NULL;
+	unsigned long end = start + len;
+	unsigned long pos;
+	int ret = -EINVAL;
+
+	if (!cpu_feature_enabled(X86_FEATURE_SGX2))
+		return -EINVAL;
+	/* Only support WILLNEED */
+	if (advice != POSIX_FADV_WILLNEED)
+		return -EINVAL;
+
+	if (offset + len < offset)
+		return -EINVAL;
+	if (start < encl->base)
+		return -EINVAL;
+	if (end < start)
+		return -EINVAL;
+	if (end > encl->base + encl->size)
+		return -EINVAL;
+
+	if (!test_bit(SGX_ENCL_INITIALIZED, &encl->flags))
+		return -EINVAL;
+
+	mmap_read_lock(current->mm);
+
+	vma = find_vma(current->mm, start);
+	if (!vma)
+		goto unlock;
+	if (vma->vm_private_data != encl)
+		goto unlock;
+
+	pos = start;
+	if (pos < vma->vm_start || end > vma->vm_end) {
+		/* Don't allow any gaps */
+		goto unlock;
+	}
+
+	/* Here: vm_start <= pos < end <= vm_end */
+	while (pos < end) {
+		if (xa_load(&encl->page_array, PFN_DOWN(pos)))
+			continue;
+		if (signal_pending(current)) {
+			if (pos == start)
+				ret = -ERESTARTSYS;
+			else
+				ret = -EINTR;
+			goto unlock;
+		}
+		ret = sgx_encl_eaug_page(vma, encl, pos);
+		/* It's OK to not finish */
+		if (ret)
+			break;
+		pos = pos + PAGE_SIZE;
+		cond_resched();
+	}
+	ret = 0;
+
+unlock:
+	mmap_read_unlock(current->mm);
+	return ret;
 }
 
 static unsigned long sgx_get_unmapped_area(struct file *file,
@@ -133,6 +206,7 @@ static const struct file_operations sgx_encl_fops = {
 	.compat_ioctl		= sgx_compat_ioctl,
 #endif
 	.mmap			= sgx_mmap,
+	.fadvise		= sgx_fadvise,
 	.get_unmapped_area	= sgx_get_unmapped_area,
 };
 
