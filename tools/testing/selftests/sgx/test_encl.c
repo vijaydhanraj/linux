@@ -37,12 +37,18 @@ static void do_encl_eaccept(void *_op)
 	int rax;
 
 	secinfo.flags = op->flags;
-
-	asm volatile(".byte 0x0f, 0x01, 0xd7"
-				: "=a" (rax)
-				: "a" (EACCEPT),
-				  "b" (&secinfo),
-				  "c" (op->epc_addr));
+	for (uint64_t addr = op->epc_addr;
+			addr < op->epc_addr + op->len; addr += 4096) {
+		asm volatile(".byte 0x0f, 0x01, 0xd7"
+					: "=a" (rax)
+					: "a" (EACCEPT),
+					  "b" (&secinfo),
+					  "c" (addr));
+		if (rax) {
+			op->ret = rax;
+			return;
+		}
+	}
 
 	op->ret = rax;
 }

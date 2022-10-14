@@ -493,6 +493,7 @@ TEST_F_TIMEOUT(enclave, unclobbered_vdso_oversubscribed_remove, TIMEOUT_DEFAULT)
 
 	eaccept_op.flags = SGX_SECINFO_TRIM | SGX_SECINFO_MODIFIED;
 	eaccept_op.header.type = ENCL_OP_EACCEPT;
+	eaccept_op.len = PAGE_SIZE;
 
 	TH_LOG("Entering enclave to run EACCEPT for each page of %zd bytes may take a while ...",
 	       heap->size);
@@ -916,6 +917,7 @@ TEST_F(enclave, epcm_permissions)
 	 * EPCM permissions changed from kernel, need to EACCEPT from enclave.
 	 */
 	eaccept_op.epc_addr = data_start;
+	eaccept_op.len = PAGE_SIZE;
 	eaccept_op.flags = SGX_SECINFO_R | SGX_SECINFO_REG | SGX_SECINFO_PR;
 	eaccept_op.ret = 0;
 	eaccept_op.header.type = ENCL_OP_EACCEPT;
@@ -1092,6 +1094,7 @@ TEST_F(enclave, augment)
 	self->run.tcs = self->encl.encl_base + PAGE_SIZE;
 
 	eaccept_op.epc_addr = self->encl.encl_base + total_size;
+	eaccept_op.len = PAGE_SIZE;
 	eaccept_op.flags = SGX_SECINFO_R | SGX_SECINFO_W | SGX_SECINFO_REG | SGX_SECINFO_PENDING;
 	eaccept_op.ret = 0;
 	eaccept_op.header.type = ENCL_OP_EACCEPT;
@@ -1194,6 +1197,7 @@ TEST_F(enclave, augment_via_eaccept)
 	 * without a #PF). All should be transparent to userspace.
 	 */
 	eaccept_op.epc_addr = self->encl.encl_base + total_size;
+	eaccept_op.len = PAGE_SIZE;
 	eaccept_op.flags = SGX_SECINFO_R | SGX_SECINFO_W | SGX_SECINFO_REG | SGX_SECINFO_PENDING;
 	eaccept_op.ret = 0;
 	eaccept_op.header.type = ENCL_OP_EACCEPT;
@@ -1299,6 +1303,7 @@ TEST_F_TIMEOUT(enclave, augment_via_eaccept_long, TIMEOUT_DEFAULT)
 	 * without a #PF). All should be transparent to userspace.
 	 */
 	eaccept_op.flags = SGX_SECINFO_R | SGX_SECINFO_W | SGX_SECINFO_REG | SGX_SECINFO_PENDING;
+	eaccept_op.len = PAGE_SIZE;
 	eaccept_op.ret = 0;
 	eaccept_op.header.type = ENCL_OP_EACCEPT;
 
@@ -1451,6 +1456,7 @@ TEST_F(enclave, tcs_create)
 	 */
 
 	eaccept_op.epc_addr = (unsigned long)stack_end;
+	eaccept_op.len = PAGE_SIZE;
 	eaccept_op.flags = SGX_SECINFO_R | SGX_SECINFO_W | SGX_SECINFO_REG | SGX_SECINFO_PENDING;
 	eaccept_op.ret = 0;
 	eaccept_op.header.type = ENCL_OP_EACCEPT;
@@ -1471,6 +1477,7 @@ TEST_F(enclave, tcs_create)
 	EXPECT_EQ(eaccept_op.ret, 0);
 
 	eaccept_op.epc_addr = (unsigned long)ssa;
+	eaccept_op.len = PAGE_SIZE;
 
 	EXPECT_EQ(ENCL_CALL(&eaccept_op, &self->run, true), 0);
 
@@ -1481,6 +1488,7 @@ TEST_F(enclave, tcs_create)
 	EXPECT_EQ(eaccept_op.ret, 0);
 
 	eaccept_op.epc_addr = (unsigned long)tcs;
+	eaccept_op.len = PAGE_SIZE;
 
 	EXPECT_EQ(ENCL_CALL(&eaccept_op, &self->run, true), 0);
 
@@ -1533,6 +1541,7 @@ TEST_F(enclave, tcs_create)
 
 	/* EACCEPT new TCS page from enclave. */
 	eaccept_op.epc_addr = (unsigned long)tcs;
+	eaccept_op.len = PAGE_SIZE;
 	eaccept_op.flags = SGX_SECINFO_TCS | SGX_SECINFO_MODIFIED;
 	eaccept_op.ret = 0;
 	eaccept_op.header.type = ENCL_OP_EACCEPT;
@@ -1601,6 +1610,7 @@ TEST_F(enclave, tcs_create)
 	self->run.tcs = self->encl.encl_base;
 
 	eaccept_op.epc_addr = (unsigned long)stack_end;
+	eaccept_op.len = PAGE_SIZE;
 	eaccept_op.flags = SGX_SECINFO_TRIM | SGX_SECINFO_MODIFIED;
 	eaccept_op.ret = 0;
 	eaccept_op.header.type = ENCL_OP_EACCEPT;
@@ -1614,6 +1624,7 @@ TEST_F(enclave, tcs_create)
 	EXPECT_EQ(eaccept_op.ret, 0);
 
 	eaccept_op.epc_addr = (unsigned long)tcs;
+	eaccept_op.len = PAGE_SIZE;
 	eaccept_op.ret = 0;
 
 	EXPECT_EQ(ENCL_CALL(&eaccept_op, &self->run, true), 0);
@@ -1625,6 +1636,7 @@ TEST_F(enclave, tcs_create)
 	EXPECT_EQ(eaccept_op.ret, 0);
 
 	eaccept_op.epc_addr = (unsigned long)ssa;
+	eaccept_op.len = PAGE_SIZE;
 	eaccept_op.ret = 0;
 
 	EXPECT_EQ(ENCL_CALL(&eaccept_op, &self->run, true), 0);
@@ -1653,6 +1665,7 @@ TEST_F(enclave, tcs_create)
 	 * trigger dynamic add of regular page at that location.
 	 */
 	eaccept_op.epc_addr = (unsigned long)tcs;
+	eaccept_op.len = PAGE_SIZE;
 	eaccept_op.flags = SGX_SECINFO_R | SGX_SECINFO_W | SGX_SECINFO_REG | SGX_SECINFO_PENDING;
 	eaccept_op.ret = 0;
 	eaccept_op.header.type = ENCL_OP_EACCEPT;
@@ -2022,6 +2035,7 @@ TEST_F(enclave, remove_added_page_invalid_access_after_eaccept)
 	EXPECT_EQ(ioc.count, 4096);
 
 	eaccept_op.epc_addr = (unsigned long)data_start;
+	eaccept_op.len = PAGE_SIZE;
 	eaccept_op.ret = 0;
 	eaccept_op.flags = SGX_SECINFO_TRIM | SGX_SECINFO_MODIFIED;
 	eaccept_op.header.type = ENCL_OP_EACCEPT;
@@ -2112,6 +2126,7 @@ TEST_F(enclave, remove_untouched_page)
 	 */
 
 	eaccept_op.epc_addr = data_start;
+	eaccept_op.len = PAGE_SIZE;
 	eaccept_op.flags = SGX_SECINFO_TRIM | SGX_SECINFO_MODIFIED;
 	eaccept_op.ret = 0;
 	eaccept_op.header.type = ENCL_OP_EACCEPT;

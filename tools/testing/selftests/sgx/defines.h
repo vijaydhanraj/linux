@@ -60,6 +60,7 @@ struct encl_op_eaccept {
 	struct encl_op_header header;
 	uint64_t epc_addr;
 	uint64_t flags;
+	uint64_t len;
 	uint64_t ret;
 };
 
