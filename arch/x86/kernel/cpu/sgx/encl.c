@@ -311,8 +311,8 @@ struct sgx_encl_page *sgx_encl_load_page(struct sgx_encl *encl,
  * Returns: Appropriate vm_fault_t: VM_FAULT_NOPAGE when PTE was installed
  * successfully, VM_FAULT_SIGBUS or VM_FAULT_OOM as error otherwise.
  */
-static vm_fault_t sgx_encl_eaug_page(struct vm_area_struct *vma,
-				     struct sgx_encl *encl, unsigned long addr)
+vm_fault_t sgx_encl_eaug_page(struct vm_area_struct *vma,
+			      struct sgx_encl *encl, unsigned long addr)
 {
 	vm_fault_t vmret = VM_FAULT_SIGBUS;
 	struct sgx_pageinfo pginfo = {0};
