@@ -146,6 +146,8 @@ void *module_alloc(unsigned long size)
 		return NULL;
 	}
 
+	pr_info("===> %s: %px\n", __func__, kasan_rest_tag(p));
+
 	/* Memory is intended to be executable, reset the pointer tag. */
 	return kasan_reset_tag(p);
 }
