@@ -487,13 +487,18 @@ static int microcode_reload_late(void)
 	return ret;
 }
 
+static bool is_lateload_safe(u64 flags)
+{
+	return (flags & LATE_LOAD_SAFE);
+}
+
 static ssize_t reload_store(struct device *dev,
 			    struct device_attribute *attr,
 			    const char *buf, size_t size)
 {
 	enum ucode_state tmp_ret = UCODE_OK;
 	int bsp = boot_cpu_data.cpu_index;
-	bool load_success = false;
+	bool safe_late_load;
 	unsigned long val;
 	ssize_t ret;
 
@@ -513,28 +518,39 @@ static ssize_t reload_store(struct device *dev,
 		goto unlock;
 	}
 
-	pr_err("Attempting late microcode loading - it is dangerous and taints the kernel.\n");
-	pr_err("You should switch to early loading, if possible.\n");
+	safe_late_load = is_lateload_safe(microcode_ops->feature_flags);
+
+	/*
+	 * If safe loading indication isn't present, bail out.
+	 */
+	if (!safe_late_load) {
+		pr_err("Attempting late microcode loading - it is dangerous and taints the kernel.\n");
+		pr_err("You should switch to early loading.\n");
+		ret = -EINVAL;
+		goto unlock;
+	}
 
 	mutex_lock(&microcode_mutex);
 	ret = microcode_reload_late();
-	if (!ret) {
-		load_success = true;
-		ret = size;
-	}
 	mutex_unlock(&microcode_mutex);
+
+	if (!ret)
+		ret = size;
 
 unlock:
 	cpus_read_unlock();
 
-	/* Taint only when loading was successful */
-	if (load_success)
-		add_taint(TAINT_CPU_OUT_OF_SPEC, LOCKDEP_STILL_OK);
-
 	return ret;
 }
 
+static ssize_t feature_show(struct device *dev,
+			    struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "0x%llx\n", microcode_ops->feature_flags);
+}
+
 static DEVICE_ATTR_WO(reload);
+static DEVICE_ATTR_RO(feature);
 #endif
 
 static ssize_t version_show(struct device *dev,
@@ -652,6 +668,7 @@ static void setup_online_cpu(struct work_struct *work)
 static struct attribute *cpu_root_microcode_attrs[] = {
 #ifdef CONFIG_MICROCODE_LATE_LOADING
 	&dev_attr_reload.attr,
+	&dev_attr_feature.attr,
 #endif
 	NULL
 };
