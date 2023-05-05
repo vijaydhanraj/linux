@@ -487,7 +487,7 @@ static ssize_t reload_store(struct device *dev,
 
 	tmp_ret = microcode_ops->request_microcode_fw(bsp, &microcode_pdev->dev);
 	if (tmp_ret != UCODE_NEW) {
-		ret = size;
+		ret = (tmp_ret == UCODE_NFOUND) ? -ENOENT : -EBADF;
 		goto unlock;
 	}
 
