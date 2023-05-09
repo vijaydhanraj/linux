@@ -352,7 +352,7 @@ static int check_online_cpus(void)
 	for_each_present_cpu(cpu) {
 		if (topology_is_primary_thread(cpu) && !cpu_online(cpu)) {
 			pr_err("Not all CPUs online, aborting microcode update.\n");
-			return -EINVAL;
+			return -EBUSY;
 		}
 	}
 
