@@ -75,6 +75,13 @@ extern __noendbr void cet_disable(void);
 
 struct ucode_cpu_info;
 
+#define MC_HEADER_META_TYPE_END		(0)
+
+struct metadata_header {
+	unsigned int	type;
+	unsigned int	blk_size;
+};
+
 int intel_cpu_collect_info(struct ucode_cpu_info *uci);
 
 static inline bool intel_cpu_signatures_match(unsigned int s1, unsigned int p1,
@@ -94,6 +101,7 @@ static inline bool intel_cpu_signatures_match(unsigned int s1, unsigned int p1,
 extern u64 x86_read_arch_cap_msr(void);
 int intel_find_matching_signature(void *mc, unsigned int csig, int cpf);
 int intel_microcode_sanity_check(void *mc, bool print_err, int hdr_type);
+struct metadata_header *intel_microcode_find_meta_data(void *mc, unsigned int meta_type);
 
 extern struct cpumask cpus_stop_mask;
 
