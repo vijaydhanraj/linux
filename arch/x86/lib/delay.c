@@ -27,7 +27,7 @@
 # include <asm/smp.h>
 #endif
 
-static void delay_loop(u64 __loops);
+void delay_loop(u64 __loops);
 
 /*
  * Calibration and selection of the delay mechanism happens only once
@@ -37,7 +37,7 @@ static void (*delay_fn)(u64) __ro_after_init = delay_loop;
 static void (*delay_halt_fn)(u64 start, u64 cycles) __ro_after_init;
 
 /* simple loop based delay: */
-static void delay_loop(u64 __loops)
+void noinstr delay_loop(u64 __loops)
 {
 	unsigned long loops = (unsigned long)__loops;
 
