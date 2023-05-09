@@ -3616,7 +3616,7 @@ bool cancel_delayed_work_sync(struct delayed_work *dwork)
 EXPORT_SYMBOL(cancel_delayed_work_sync);
 
 /**
- * schedule_on_each_cpu - execute a function synchronously on each online CPU
+ * schedule_on_each_cpu_locked - execute a function synchronously on each online CPU
  * @func: the function to call
  *
  * schedule_on_each_cpu() executes @func on each online CPU using the
@@ -3626,16 +3626,17 @@ EXPORT_SYMBOL(cancel_delayed_work_sync);
  * Return:
  * 0 on success, -errno on failure.
  */
-int schedule_on_each_cpu(work_func_t func)
+int schedule_on_each_cpu_locked(work_func_t func)
 {
 	int cpu;
 	struct work_struct __percpu *works;
+
+	lockdep_assert_cpus_held();
 
 	works = alloc_percpu(struct work_struct);
 	if (!works)
 		return -ENOMEM;
 
-	cpus_read_lock();
 
 	for_each_online_cpu(cpu) {
 		struct work_struct *work = per_cpu_ptr(works, cpu);
@@ -3647,9 +3648,19 @@ int schedule_on_each_cpu(work_func_t func)
 	for_each_online_cpu(cpu)
 		flush_work(per_cpu_ptr(works, cpu));
 
-	cpus_read_unlock();
 	free_percpu(works);
 	return 0;
+}
+
+int schedule_on_each_cpu(work_func_t func)
+{
+	int rv;
+
+	cpus_read_lock();
+	rv = schedule_on_each_cpu_locked(func);
+	cpus_read_unlock();
+
+	return rv;
 }
 
 /**

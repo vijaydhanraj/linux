@@ -450,6 +450,7 @@ extern bool queue_rcu_work(struct workqueue_struct *wq, struct rcu_work *rwork);
 extern void __flush_workqueue(struct workqueue_struct *wq);
 extern void drain_workqueue(struct workqueue_struct *wq);
 
+extern int schedule_on_each_cpu_locked(work_func_t func);
 extern int schedule_on_each_cpu(work_func_t func);
 
 int execute_in_process_context(work_func_t fn, struct execute_work *);
