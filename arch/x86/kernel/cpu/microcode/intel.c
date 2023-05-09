@@ -578,6 +578,9 @@ static int collect_cpu_info(int cpu_num, struct cpu_signature *csig)
 	struct cpuinfo_x86 *c = &cpu_data(cpu_num);
 	unsigned int val[2];
 
+	/* Ensure the thread reads on the same CPU */
+	WARN_ON_ONCE(cpu_num != raw_smp_processor_id());
+
 	memset(csig, 0, sizeof(*csig));
 
 	csig->sig = cpuid_eax(0x00000001);
@@ -588,6 +591,7 @@ static int collect_cpu_info(int cpu_num, struct cpu_signature *csig)
 		csig->pf = 1 << ((val[1] >> 18) & 7);
 	}
 
+	c->microcode = intel_get_microcode_revision();
 	csig->rev = c->microcode;
 
 	return 0;
