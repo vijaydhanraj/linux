@@ -790,9 +790,22 @@ struct sev_data_snp_shutdown_ex {
 #ifdef CONFIG_CRYPTO_DEV_SP_PSP
 
 /**
+ * struct sev_platform_init_args
+ *
+ * @error: SEV firmware error code
+ * @probe: True if this is being called as part of CCP module probe, which
+ *  will defer SEV_INIT/SEV_INIT_EX firmware initialization until needed
+ *  unless psp_init_on_probe module param is set
+ */
+struct sev_platform_init_args {
+	int error;
+	bool probe;
+};
+
+/**
  * sev_platform_init - perform SEV INIT command
  *
- * @error: SEV command return code
+ * @args: struct sev_platform_init_args to pass in arguments
  *
  * Returns:
  * 0 if the SEV successfully processed the command
@@ -801,7 +814,7 @@ struct sev_data_snp_shutdown_ex {
  * -%ETIMEDOUT if the SEV command timed out
  * -%EIO       if the SEV returned a non-zero return code
  */
-int sev_platform_init(int *error);
+int sev_platform_init(struct sev_platform_init_args *args);
 
 /**
  * sev_platform_status - perform SEV PLATFORM_STATUS command
