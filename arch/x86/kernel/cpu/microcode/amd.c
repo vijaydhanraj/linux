@@ -392,6 +392,15 @@ static void scan_containers(u8 *ucode, size_t size, struct cont_desc *desc)
 	}
 }
 
+static u32 get_current_rev_amd(void)
+{
+	u32 rev, dummy __always_unused;
+
+	rdmsr(MSR_AMD64_PATCH_LEVEL, rev, dummy);
+
+	return rev;
+}
+
 static int __apply_microcode_amd(struct microcode_amd *mc)
 {
 	u32 rev, dummy;
@@ -944,6 +953,7 @@ static struct microcode_ops microcode_amd_ops = {
 	.collect_cpu_info                 = collect_cpu_info_amd,
 	.apply_microcode                  = apply_microcode_amd,
 	.microcode_fini_cpu               = microcode_fini_cpu_amd,
+	.get_current_rev		  = get_current_rev_amd,
 };
 
 struct microcode_ops * __init init_amd_microcode(void)
