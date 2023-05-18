@@ -380,9 +380,12 @@ static int __wait_for_cpus(atomic_t *t, long long timeout)
 
 static enum ucode_state apply_microcode(int cpu)
 {
+	struct cpuinfo_x86 *c = &cpu_data(cpu);
 	enum ucode_state err;
 
 	err = microcode_ops->apply_microcode(cpu);
+	c->microcode = microcode_ops->get_current_rev();
+
 	return err;
 }
 
