@@ -403,13 +403,10 @@ static u32 get_current_rev_amd(void)
 
 static int __apply_microcode_amd(struct microcode_amd *mc)
 {
-	u32 rev, dummy;
-
 	native_wrmsrl(MSR_AMD64_PATCH_LOADER, (u64)(long)&mc->hdr.data_code);
 
 	/* verify patch application was successful */
-	native_rdmsr(MSR_AMD64_PATCH_LEVEL, rev, dummy);
-	if (rev != mc->hdr.patch_id)
+	if (get_current_rev_amd() != mc->hdr.patch_id)
 		return -1;
 
 	return 0;
@@ -431,7 +428,7 @@ static bool early_apply_microcode(u32 cpuid_1_eax, void *ucode, size_t size, boo
 	struct cont_desc desc = { 0 };
 	u8 (*patch)[PATCH_MAX_SIZE];
 	struct microcode_amd *mc;
-	u32 rev, dummy, *new_rev;
+	u32 rev, *new_rev;
 	bool ret = false;
 
 #ifdef CONFIG_X86_32
@@ -450,7 +447,7 @@ static bool early_apply_microcode(u32 cpuid_1_eax, void *ucode, size_t size, boo
 	if (!mc)
 		return ret;
 
-	native_rdmsr(MSR_AMD64_PATCH_LEVEL, rev, dummy);
+	rev = get_current_rev_amd();
 
 	/*
 	 * Allow application of the same revision to pick up SMT-specific
@@ -533,7 +530,7 @@ void load_ucode_amd_ap(unsigned int cpuid_1_eax)
 {
 	struct microcode_amd *mc;
 	struct cpio_data cp;
-	u32 *new_rev, rev, dummy;
+	u32 *new_rev, rev;
 
 	if (IS_ENABLED(CONFIG_X86_32)) {
 		mc	= (struct microcode_amd *)__pa_nodebug(amd_ucode_patch);
@@ -543,7 +540,7 @@ void load_ucode_amd_ap(unsigned int cpuid_1_eax)
 		new_rev = &ucode_new_rev;
 	}
 
-	native_rdmsr(MSR_AMD64_PATCH_LEVEL, rev, dummy);
+	rev = get_current_rev_amd();
 
 	/*
 	 * Check whether a new patch has been saved already. Also, allow application of
@@ -591,12 +588,12 @@ int __init save_microcode_in_initrd_amd(unsigned int cpuid_1_eax)
 
 void reload_ucode_amd(unsigned int cpu)
 {
-	u32 rev, dummy __always_unused;
+	u32 rev;
 	struct microcode_amd *mc;
 
 	mc = (struct microcode_amd *)amd_ucode_patch[cpu_to_node(cpu)];
 
-	rdmsr(MSR_AMD64_PATCH_LEVEL, rev, dummy);
+	rev = get_current_rev_amd();
 
 	if (rev < mc->hdr.patch_id) {
 		if (!__apply_microcode_amd(mc)) {
@@ -698,7 +695,7 @@ static enum ucode_state apply_microcode_amd(int cpu)
 	struct ucode_cpu_info *uci;
 	struct ucode_patch *p;
 	enum ucode_state ret;
-	u32 rev, dummy __always_unused;
+	u32 rev;
 
 	BUG_ON(raw_smp_processor_id() != cpu);
 
@@ -711,7 +708,7 @@ static enum ucode_state apply_microcode_amd(int cpu)
 	mc_amd  = p->data;
 	uci->mc = p->data;
 
-	rdmsr(MSR_AMD64_PATCH_LEVEL, rev, dummy);
+	rev = get_current_rev_amd();
 
 	/* need to apply patch? */
 	if (rev >= mc_amd->hdr.patch_id) {
