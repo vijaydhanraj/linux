@@ -382,9 +382,16 @@ static enum ucode_state apply_microcode(int cpu)
 {
 	struct cpuinfo_x86 *c = &cpu_data(cpu);
 	enum ucode_state err;
+	bool bsp;
+
+	bsp = c->cpu_index == boot_cpu_data.cpu_index;
 
 	err = microcode_ops->apply_microcode(cpu);
 	c->microcode = microcode_ops->get_current_rev();
+
+	/* Update boot_cpu_data's revision too, if we're on the BSP: */
+	if (bsp)
+		boot_cpu_data.microcode = c->microcode;
 
 	return err;
 }
