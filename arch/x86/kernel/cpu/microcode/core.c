@@ -378,6 +378,14 @@ static int __wait_for_cpus(atomic_t *t, long long timeout)
 	return 0;
 }
 
+static enum ucode_state apply_microcode(int cpu)
+{
+	enum ucode_state err;
+
+	err = microcode_ops->apply_microcode(cpu);
+	return err;
+}
+
 /*
  * Returns:
  * < 0 - on error
@@ -403,7 +411,7 @@ static int __reload_late(void *info)
 	 * below.
 	 */
 	if (cpumask_first(topology_sibling_cpumask(cpu)) == cpu)
-		err = microcode_ops->apply_microcode(cpu);
+		err = apply_microcode(cpu);
 	else
 		goto wait_for_siblings;
 
@@ -425,7 +433,7 @@ wait_for_siblings:
 	 * revision.
 	 */
 	if (cpumask_first(topology_sibling_cpumask(cpu)) != cpu)
-		err = microcode_ops->apply_microcode(cpu);
+		err = apply_microcode(cpu);
 
 	return ret;
 }
@@ -555,7 +563,7 @@ static enum ucode_state microcode_init_cpu(int cpu)
 
 	microcode_ops->collect_cpu_info(cpu, &uci->cpu_sig);
 
-	return microcode_ops->apply_microcode(cpu);
+	return apply_microcode(cpu);
 }
 
 /**
@@ -567,7 +575,7 @@ void microcode_bsp_resume(void)
 	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
 
 	if (uci->mc)
-		microcode_ops->apply_microcode(cpu);
+		apply_microcode(cpu);
 	else
 		reload_early_microcode(cpu);
 }
@@ -578,7 +586,7 @@ static struct syscore_ops mc_syscore_ops = {
 
 static int mc_cpu_starting(unsigned int cpu)
 {
-	enum ucode_state err = microcode_ops->apply_microcode(cpu);
+	enum ucode_state err = apply_microcode(cpu);
 
 	pr_debug("%s: CPU%d, err: %d\n", __func__, cpu, err);
 
