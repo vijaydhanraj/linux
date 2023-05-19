@@ -634,7 +634,7 @@ static enum ucode_state generic_load_microcode(int cpu, struct iov_iter *iter)
 {
 	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
 	unsigned int curr_mc_size = 0, new_mc_size = 0;
-	enum ucode_state ret = UCODE_OK;
+	enum ucode_state ret = UCODE_ERROR;
 	int new_rev = uci->cpu_sig.rev;
 	u8 *new_mc = NULL, *mc = NULL;
 	unsigned int csig, cpf;
@@ -696,7 +696,7 @@ static enum ucode_state generic_load_microcode(int cpu, struct iov_iter *iter)
 	}
 
 	if (!new_mc)
-		return UCODE_NFOUND;
+		return ret;
 
 	vfree(uci->mc);
 	uci->mc = (struct microcode_intel *)new_mc;
