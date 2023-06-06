@@ -378,20 +378,25 @@ static int __wait_for_cpus(atomic_t *t, long long timeout)
 	return 0;
 }
 
-static enum ucode_state apply_microcode(int cpu)
+static void update_cpuinfo_x86(int cpu)
 {
 	struct cpuinfo_x86 *c = &cpu_data(cpu);
-	enum ucode_state err;
 	bool bsp;
 
 	bsp = c->cpu_index == boot_cpu_data.cpu_index;
-
-	err = microcode_ops->apply_microcode(cpu);
 	c->microcode = microcode_ops->get_current_rev();
 
 	/* Update boot_cpu_data's revision too, if we're on the BSP: */
 	if (bsp)
 		boot_cpu_data.microcode = c->microcode;
+}
+
+static enum ucode_state apply_microcode(int cpu)
+{
+	enum ucode_state err;
+
+	err = microcode_ops->apply_microcode(cpu);
+	update_cpuinfo_x86(cpu);
 
 	return err;
 }
