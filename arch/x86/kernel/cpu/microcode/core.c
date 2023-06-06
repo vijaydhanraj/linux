@@ -446,13 +446,12 @@ wait_for_siblings:
 		panic("Timeout during microcode update!\n");
 
 	/*
-	 * At least one thread has completed update on each core.
-	 * For others, simply call the update to make sure the
-	 * per-cpu cpuinfo can be updated with right microcode
-	 * revision.
+	 * The lead thread has completed update on each core.
+	 * For others, simply update the per-cpu cpuinfo
+	 * with microcode revision.
 	 */
 	if (!lead_thread)
-		err = apply_microcode(cpu);
+		update_cpuinfo_x86(cpu);
 
 	return ret;
 }
