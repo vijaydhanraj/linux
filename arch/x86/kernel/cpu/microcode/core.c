@@ -411,6 +411,7 @@ static int __reload_late(void *info)
 	int cpu = smp_processor_id();
 	enum ucode_state err;
 	bool lead_thread;
+	bool load_both;
 	int ret = 0;
 
 	/*
@@ -446,14 +447,18 @@ wait_for_siblings:
 	if (__wait_for_cpus(&late_cpus_out, NSEC_PER_SEC))
 		panic("Timeout during microcode update!\n");
 
+	load_both = microcode_ops->control & LATE_LOAD_BOTH;
 	/*
-	 * At least one thread has completed update on each core.
-	 * For others, simply call the update to make sure the
-	 * per-cpu cpuinfo can be updated with right microcode
-	 * revision.
+	 * The lead thread has completed update on each core.
+	 * For others, simply update the per-cpu cpuinfo
+	 * with microcode revision.
 	 */
-	if (!lead_thread)
-		err = apply_microcode(cpu);
+	if (!lead_thread) {
+		if (load_both)
+			apply_microcode(cpu);
+		else
+			update_cpuinfo_x86(cpu);
+	}
 
 	return ret;
 }
