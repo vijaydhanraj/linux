@@ -135,6 +135,39 @@ static void save_microcode_patch(struct ucode_cpu_info *uci, void *data, unsigne
 		intel_ucode_patch = p->data;
 }
 
+static int is_lateload_safe(struct microcode_header_intel *mc_header)
+{
+	int cur_rev = boot_cpu_data.microcode;
+
+	/*
+	 * When late-loading, ensure the header declares a minimum revision
+	 * required to perform a late-load.
+	 */
+	if (!mc_header->min_req_ver) {
+		pr_warn("Late loading denied: No min version in microcode header\n");
+		return -EINVAL;
+	}
+
+	if (cur_rev > mc_header->rev) {
+		pr_warn("Current microcode rev 0x%x greater than 0x%x, aborting\n",
+			cur_rev, mc_header->rev);
+		return -EINVAL;
+	}
+
+	/*
+	 * Enforce the minimum revision specified in the header is either
+	 * greater or equal to the current revision.
+	 */
+	if (cur_rev < mc_header->min_req_ver) {
+		pr_warn("Late loading denied: Current revision 0x%x too old to update\n", cur_rev);
+		pr_warn("Must be at 0x%x or higher. Use early loading instead\n",
+			mc_header->min_req_ver);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 /*
  * Get microcode matching with BSP's model. Only CPUs with the same model as
  * BSP can stay in the platform.
@@ -667,7 +700,8 @@ static enum ucode_state generic_load_microcode(int cpu, struct iov_iter *iter)
 		memcpy(mc, &mc_header, sizeof(mc_header));
 		data = mc + sizeof(mc_header);
 		if (!copy_from_iter_full(data, data_size, iter) ||
-		    intel_microcode_sanity_check(mc, true, MC_HEADER_TYPE_MICROCODE) < 0) {
+		    intel_microcode_sanity_check(mc, true, MC_HEADER_TYPE_MICROCODE) < 0 ||
+		    is_lateload_safe(&mc_header)) {
 			ret = UCODE_ERROR;
 			break;
 		}
