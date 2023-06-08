@@ -46,6 +46,7 @@
 static struct microcode_ops	*microcode_ops;
 static struct dentry		*dentry_ucode;
 static bool dis_ucode_ldr = true;
+static bool dis_early_ldr = true;
 bool override_minrev;
 
 bool initrd_gone;
@@ -112,16 +113,20 @@ static bool amd_check_current_patch_level(void)
 static bool __init check_loader_disabled_bsp(void)
 {
 	static const char *__dis_opt_str = "dis_ucode_ldr";
+	static const char *__dis_early_str = "dis_early_ldr";
 
 #ifdef CONFIG_X86_32
 	const char *cmdline = (const char *)__pa_nodebug(boot_command_line);
 	const char *option  = (const char *)__pa_nodebug(__dis_opt_str);
+	const char *early   = (const char *)__pa_nodebug(__dis_early_str);
 	bool *res = (bool *)__pa_nodebug(&dis_ucode_ldr);
-
+	bool *res_early = (bool *)__pa_nodebug(&dis_early_ldr);
 #else /* CONFIG_X86_64 */
 	const char *cmdline = boot_command_line;
 	const char *option  = __dis_opt_str;
+	const char *early   = __dis_early_str;
 	bool *res = &dis_ucode_ldr;
+	bool *res_early = &dis_early_ldr;
 #endif
 
 	/*
@@ -140,7 +145,19 @@ static bool __init check_loader_disabled_bsp(void)
 	if (cmdline_find_option_bool(cmdline, option) <= 0)
 		*res = false;
 
+	if (cmdline_find_option_bool(cmdline, early) == 0)
+		*res_early = false;
+
 	return *res;
+}
+
+static bool check_early_disabled(void)
+{
+#ifdef CONFIG_X86_32
+	return *((bool *)__pa_nodebug(&dis_early_ldr));
+#else
+	return dis_early_ldr;
+#endif
 }
 
 void __init load_ucode_bsp(void)
@@ -169,7 +186,7 @@ void __init load_ucode_bsp(void)
 		return;
 	}
 
-	if (check_loader_disabled_bsp())
+	if (check_loader_disabled_bsp() || check_early_disabled())
 		return;
 
 	if (intel)
@@ -181,9 +198,10 @@ void __init load_ucode_bsp(void)
 static bool check_loader_disabled_ap(void)
 {
 #ifdef CONFIG_X86_32
-	return *((bool *)__pa_nodebug(&dis_ucode_ldr));
+	return (*((bool *)__pa_nodebug(&dis_ucode_ldr)) ||
+		*((bool *)__pa_nodebug(&dis_early_ldr)));
 #else
-	return dis_ucode_ldr;
+	return dis_ucode_ldr || dis_early_ldr;
 #endif
 }
 
@@ -214,6 +232,9 @@ static int __init save_microcode_in_initrd(void)
 {
 	struct cpuinfo_x86 *c = &boot_cpu_data;
 	int ret = -EINVAL;
+
+	if (dis_early_ldr)
+		return 0;
 
 	switch (c->x86_vendor) {
 	case X86_VENDOR_INTEL:

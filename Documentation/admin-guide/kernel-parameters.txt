@@ -1108,6 +1108,9 @@
 
 	dis_ucode_ldr	[X86] Disable the microcode loader.
 
+	dis_early_ldr	[X86] Only disables early loading, but leaves
+			late-loading available.
+
 	dma_debug=off	If the kernel is compiled with DMA_API_DEBUG support,
 			this option disables the debugging code at boot.
 
