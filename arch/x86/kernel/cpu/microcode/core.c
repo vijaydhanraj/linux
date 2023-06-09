@@ -23,6 +23,7 @@
 #include <linux/miscdevice.h>
 #include <linux/capability.h>
 #include <linux/firmware.h>
+#include <linux/debugfs.h>
 #include <linux/kernel.h>
 #include <linux/delay.h>
 #include <linux/mutex.h>
@@ -44,7 +45,10 @@
 #define DRIVER_VERSION	"2.2"
 
 static struct microcode_ops	*microcode_ops;
+static struct dentry            *dentry_ucode;
+
 static bool dis_ucode_ldr = true;
+bool donmi = true;
 
 bool initrd_gone;
 
@@ -455,7 +459,10 @@ static void prepare_for_nmi(void)
 
 static bool __nmi_safe(void)
 {
-	return (microcode_ops->control & LATE_LOAD_NMI_SAFE);
+	if ((microcode_ops->control & LATE_LOAD_NMI_SAFE) || !donmi)
+		return true;
+	else
+		return false;
 }
 
 /*
@@ -833,7 +840,11 @@ static int __init microcode_init(void)
 	cpuhp_setup_state_nocalls(CPUHP_AP_ONLINE_DYN, "x86/microcode:online",
 				  mc_cpu_online, mc_cpu_down_prep);
 
+	dentry_ucode = debugfs_create_dir("microcode", NULL);
+	debugfs_create_bool("donmi", 0644, dentry_ucode, &donmi);
+
 	pr_info("Microcode Update Driver: v%s.", DRIVER_VERSION);
+	pr_debug("NMI for sibling %s\n", donmi ? "enabled" : "disabled");
 
 	return 0;
 
