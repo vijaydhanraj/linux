@@ -453,6 +453,11 @@ static void prepare_for_nmi(void)
 	}
 }
 
+static bool __nmi_safe(void)
+{
+	return (microcode_ops->control & LATE_LOAD_NMI_SAFE);
+}
+
 /*
  * Returns:
  * < 0 - on error
@@ -464,8 +469,11 @@ static int __reload_late(void *info)
 	struct core_rendez *pcpu_core;
 	enum ucode_state err = UCODE_OK;
 	bool load_both;
+	bool nmi_safe;
 	bool lead_thread = false;
 	int ret = 0;
+
+	nmi_safe = __nmi_safe();
 
 	/*
 	 * Wait for all CPUs to arrive. A load will not be attempted unless all
@@ -497,23 +505,28 @@ static int __reload_late(void *info)
 		 * Wait for all siblings to enter
 		 * NMI before performing the update
 		 */
-		ret = __wait_for_core_siblings(pcpu_core);
-		if (ret || atomic_read(&pcpu_core->failed)) {
-			pr_err("CPU %d core lead timeout waiting for siblings\n", cpu);
-			ret = -1;
-			goto wait_for_siblings;
+		if (!nmi_safe) {
+			ret = __wait_for_core_siblings(pcpu_core);
+			if (ret || atomic_read(&pcpu_core->failed)) {
+				pr_err("CPU %d core lead timeout waiting for siblings\n", cpu);
+				ret = -1;
+				goto wait_for_siblings;
+			}
 		}
 		pr_debug("Primary CPU %d proceeding with update\n", cpu);
 		err = apply_microcode(cpu);
-		atomic_set(&pcpu_core->core_done, 1);
+		if (!nmi_safe)
+			atomic_set(&pcpu_core->core_done, 1);
 	} else {
 		/*
 		 * Set a pointer to the lead thread. When the self NMI is
 		 * taken, CPU knows the pcpu_core structure to communicate
 		 * that it has landed in the NMI
 		 */
-		this_cpu_write(nmi_primary_ptr, pcpu_core);
-		apic->send_IPI_self(NMI_VECTOR);
+		if (!nmi_safe) {
+			this_cpu_write(nmi_primary_ptr, pcpu_core);
+			apic->send_IPI_self(NMI_VECTOR);
+		}
 		goto wait_for_siblings;
 	}
 
@@ -553,6 +566,9 @@ static int microcode_reload_late(void)
 {
 	int old = boot_cpu_data.microcode, ret;
 	struct cpuinfo_x86 prev_info;
+	bool nmi_safe;
+
+	nmi_safe = __nmi_safe();
 
 	atomic_set(&late_cpus_in,  0);
 	atomic_set(&late_cpus_out, 0);
@@ -562,13 +578,15 @@ static int microcode_reload_late(void)
 	 * check whether any bits changed after an update.
 	 */
 	store_cpu_caps(&prev_info);
-	prepare_for_nmi();
 
-	ret = register_nmi_handler(NMI_LOCAL, ucode_nmi_cb, NMI_FLAG_FIRST,
-				   "ucode_nmi");
-	if (ret) {
-		pr_err("Unable to register NMI handler\n");
-		goto done;
+	if (!nmi_safe) {
+		prepare_for_nmi();
+		ret = register_nmi_handler(NMI_LOCAL, ucode_nmi_cb, NMI_FLAG_FIRST,
+					   "ucode_nmi");
+		if (ret) {
+			pr_err("Unable to register NMI handler\n");
+			goto done;
+		}
 	}
 
 	ret = stop_machine_cpuslocked(__reload_late, NULL, cpu_online_mask);
@@ -581,7 +599,8 @@ static int microcode_reload_late(void)
 			boot_cpu_data.microcode);
 	}
 
-	unregister_nmi_handler(NMI_LOCAL, "ucode_nmi");
+	if (!nmi_safe)
+		unregister_nmi_handler(NMI_LOCAL, "ucode_nmi");
 
 done:
 	return ret;
