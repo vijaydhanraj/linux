@@ -39,6 +39,7 @@
 #include <asm/processor.h>
 #include <asm/cmdline.h>
 #include <asm/setup.h>
+#include <asm/apic.h>
 
 #define DRIVER_VERSION	"2.2"
 
@@ -402,22 +403,74 @@ static enum ucode_state apply_microcode(int cpu)
 }
 
 /*
+ * This simply ensures that the self IPI with NMI to siblings is marked as
+ * handled.
+ */
+static int ucode_nmi_cb(unsigned int val, struct pt_regs *regs)
+{
+	return NMI_HANDLED;
+}
+
+/*
+ * Primary thread waits for all siblings to report that they have enterered
+ * the NMI handler
+ */
+static int __wait_for_core_siblings(struct core_rendez *rendez)
+{
+	unsigned long long timeout = NSEC_PER_MSEC;
+	atomic_t *t = &rendez->callin;
+	int cpu = smp_processor_id();
+
+	while (atomic_read(t)) {
+		cpu_relax();
+		ndelay(SPINUNIT);
+		touch_nmi_watchdog();
+		timeout -= SPINUNIT;
+		if (timeout < SPINUNIT) {
+			pr_err("CPU%d timedout waiting for siblings\n", cpu);
+			atomic_inc(&rendez->failed);
+			return 1;
+		}
+	}
+	return 0;
+}
+
+static void prepare_for_nmi(void)
+{
+	struct core_rendez *pcpu_core;
+	int cpu, first_cpu, num_sibs;
+
+	for_each_online_cpu(cpu) {
+		first_cpu = cpumask_first(topology_sibling_cpumask(cpu));
+		if (cpu != first_cpu)
+			continue;
+
+		pcpu_core = &per_cpu(core_sync, first_cpu);
+		num_sibs = cpumask_weight(topology_sibling_cpumask(cpu)) - 1;
+		atomic_set(&pcpu_core->callin, num_sibs);
+		atomic_set(&pcpu_core->core_done, 0);
+		atomic_set(&pcpu_core->failed, 0);
+	}
+}
+
+/*
  * Returns:
  * < 0 - on error
  *   0 - success (no update done or microcode was updated)
  */
 static int __reload_late(void *info)
 {
-	int cpu = smp_processor_id();
-	enum ucode_state err;
-	bool lead_thread;
+	int first_cpu, cpu = smp_processor_id();
+	struct core_rendez *pcpu_core;
+	enum ucode_state err = UCODE_OK;
 	bool load_both;
+	bool lead_thread = false;
 	int ret = 0;
 
 	/*
 	 * Wait for all CPUs to arrive. A load will not be attempted unless all
 	 * CPUs show up.
-	 * */
+	 */
 	if (__wait_for_cpus(&late_cpus_in, NSEC_PER_SEC))
 		return -1;
 
@@ -428,19 +481,45 @@ static int __reload_late(void *info)
 	 * loading attempts happen on multiple threads of an SMT core. See
 	 * below.
 	 */
-	if (cpumask_first(topology_sibling_cpumask(cpu)) == cpu) {
+	first_cpu = cpumask_first(topology_sibling_cpumask(cpu));
+
+	if (first_cpu == cpu)
 		lead_thread = true;
+
+	pcpu_core = &per_cpu(core_sync, first_cpu);
+
+	/*
+	 * Set the CPUs that we should hold in NMI until the primary has
+	 * completed the microcode update.
+	 */
+	if (lead_thread) {
+		/*
+		 * Wait for all siblings to enter
+		 * NMI before performing the update
+		 */
+		ret = __wait_for_core_siblings(pcpu_core);
+		if (ret || atomic_read(&pcpu_core->failed)) {
+			pr_err("CPU %d core lead timeout waiting for siblings\n", cpu);
+			ret = -1;
+			goto wait_for_siblings;
+		}
+		pr_debug("Primary CPU %d proceeding with update\n", cpu);
 		err = apply_microcode(cpu);
+		atomic_set(&pcpu_core->core_done, 1);
 	} else {
-		lead_thread = false;
+		/*
+		 * Set a pointer to the lead thread. When the self NMI is
+		 * taken, CPU knows the pcpu_core structure to communicate
+		 * that it has landed in the NMI
+		 */
+		this_cpu_write(nmi_primary_ptr, pcpu_core);
+		apic->send_IPI_self(NMI_VECTOR);
 		goto wait_for_siblings;
 	}
 
-	if (err >= UCODE_NFOUND) {
-		if (err == UCODE_ERROR) {
-			pr_warn("Error reloading microcode on CPU %d\n", cpu);
-			ret = -1;
-		}
+	if (err == UCODE_ERROR) {
+		pr_warn("Error reloading microcode on CPU %d\n", cpu);
+		ret = -1;
 	}
 
 wait_for_siblings:
@@ -454,6 +533,9 @@ wait_for_siblings:
 	 * with microcode revision.
 	 */
 	if (!lead_thread) {
+		if (atomic_read(&pcpu_core->failed))
+			return -1;
+
 		if (load_both)
 			apply_microcode(cpu);
 		else
@@ -480,6 +562,14 @@ static int microcode_reload_late(void)
 	 * check whether any bits changed after an update.
 	 */
 	store_cpu_caps(&prev_info);
+	prepare_for_nmi();
+
+	ret = register_nmi_handler(NMI_LOCAL, ucode_nmi_cb, NMI_FLAG_FIRST,
+				   "ucode_nmi");
+	if (ret) {
+		pr_err("Unable to register NMI handler\n");
+		goto done;
+	}
 
 	ret = stop_machine_cpuslocked(__reload_late, NULL, cpu_online_mask);
 	if (!ret) {
@@ -491,6 +581,9 @@ static int microcode_reload_late(void)
 			boot_cpu_data.microcode);
 	}
 
+	unregister_nmi_handler(NMI_LOCAL, "ucode_nmi");
+
+done:
 	return ret;
 }
 

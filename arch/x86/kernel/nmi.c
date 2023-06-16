@@ -28,6 +28,7 @@
 #include <asm/cpu_entry_area.h>
 #include <asm/traps.h>
 #include <asm/mach_traps.h>
+#include <asm/microcode.h>
 #include <asm/nmi.h>
 #include <asm/x86_init.h>
 #include <asm/reboot.h>
@@ -521,6 +522,12 @@ nmi_restart:
 	sev_es_ist_enter(regs);
 
 	this_cpu_write(nmi_dr7, local_db_save());
+
+	/*
+	 * If microcodeupdate is in progress, check and hold the sibling in
+	 * the NMI until primary has completed the update
+	 */
+	hold_sibling_in_nmi();
 
 	irq_state = irqentry_nmi_enter(regs);
 
