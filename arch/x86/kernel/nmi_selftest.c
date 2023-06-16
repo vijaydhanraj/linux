@@ -105,6 +105,36 @@ static void __init local_ipi(void)
 	test_nmi_ipi(to_cpumask(nmi_ipi_mask));
 }
 
+static void __init self_nmi_test(void)
+{
+	unsigned long timeout;
+
+	cpumask_clear(to_cpumask(nmi_ipi_mask));
+	cpumask_set_cpu(smp_processor_id(), to_cpumask(nmi_ipi_mask));
+
+	if (register_nmi_handler(NMI_LOCAL, test_nmi_ipi_callback,
+				 NMI_FLAG_FIRST, "nmi_selftest", __initdata)) {
+		nmi_fail = FAILURE;
+		return;
+	}
+
+	/* sync above data before sending NMI */
+	wmb();
+
+	apic->send_IPI_self(NMI_VECTOR);
+
+	/* Don't wait longer than a second */
+	timeout = USEC_PER_SEC;
+	while (!cpumask_empty(to_cpumask(nmi_ipi_mask)) && --timeout)
+		udelay(1);
+
+	/* What happens if we timeout, do we still unregister?? */
+	unregister_nmi_handler(NMI_LOCAL, "nmi_selftest");
+
+	if (!timeout)
+		nmi_fail = TIMEOUT;
+}
+
 static void __init reset_nmi(void)
 {
 	nmi_fail = 0;
@@ -157,6 +187,8 @@ void __init nmi_selftest(void)
 	print_testname("local IPI");
 	dotest(local_ipi, SUCCESS);
 	printk(KERN_CONT "\n");
+	print_testname("Self NMI IPI");
+	dotest(self_nmi_test, SUCCESS);
 
 	cleanup_nmi_testsuite();
 

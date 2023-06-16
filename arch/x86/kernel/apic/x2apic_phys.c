@@ -152,7 +152,11 @@ int x2apic_phys_pkg_id(int initial_apicid, int index_msb)
 
 void x2apic_send_IPI_self(int vector)
 {
-	apic_write(APIC_SELF_IPI, vector);
+	if (unlikely(vector == NMI_VECTOR))
+		apic->send_IPI_mask(cpumask_of(smp_processor_id()),
+				    NMI_VECTOR);
+	else
+		apic_write(APIC_SELF_IPI, vector);
 }
 
 static struct apic apic_x2apic_phys __ro_after_init = {

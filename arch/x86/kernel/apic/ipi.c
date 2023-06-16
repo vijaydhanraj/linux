@@ -239,7 +239,11 @@ void default_send_IPI_all(int vector)
 
 void default_send_IPI_self(int vector)
 {
-	__default_send_IPI_shortcut(APIC_DEST_SELF, vector);
+	if (unlikely(vector == NMI_VECTOR))
+		apic->send_IPI_mask(cpumask_of(smp_processor_id()),
+				    NMI_VECTOR);
+	else
+		__default_send_IPI_shortcut(APIC_DEST_SELF, vector);
 }
 
 #ifdef CONFIG_X86_32
