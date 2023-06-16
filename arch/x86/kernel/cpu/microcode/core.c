@@ -539,7 +539,14 @@ unlock:
 	return ret;
 }
 
+static ssize_t control_show(struct device *dev,
+			    struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "0x%lx\n", microcode_ops->control);
+}
+
 static DEVICE_ATTR_WO(reload);
+static DEVICE_ATTR_RO(control);
 #endif
 
 static ssize_t version_show(struct device *dev,
@@ -657,6 +664,7 @@ static void setup_online_cpu(struct work_struct *work)
 static struct attribute *cpu_root_microcode_attrs[] = {
 #ifdef CONFIG_MICROCODE_LATE_LOADING
 	&dev_attr_reload.attr,
+	&dev_attr_control.attr,
 #endif
 	NULL
 };
