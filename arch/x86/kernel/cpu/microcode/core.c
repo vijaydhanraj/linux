@@ -49,6 +49,7 @@ static struct dentry            *dentry_ucode;
 
 static bool dis_ucode_ldr = true;
 bool donmi = true;
+bool override_minrev;
 
 bool initrd_gone;
 
@@ -650,11 +651,14 @@ static ssize_t reload_store(struct device *dev,
 	/*
 	 * If safe loading indication isn't present, bail out.
 	 */
-	if (!safe_late_load) {
+	if (!safe_late_load || override_minrev) {
 		pr_err("Attempting late microcode loading - it is dangerous and taints the kernel.\n");
 		pr_err("You should switch to early loading.\n");
-		ret = -EINVAL;
-		goto unlock;
+
+		if (!override_minrev) {
+			ret = -EINVAL;
+			goto unlock;
+		}
 	}
 
 	mutex_lock(&microcode_mutex);
@@ -672,8 +676,10 @@ unlock:
 	cpus_read_unlock();
 
 	/* Taint only when loading was successful */
-	if (load_success && !safe_late_load)
-		add_taint(TAINT_CPU_OUT_OF_SPEC, LOCKDEP_STILL_OK);
+	if (load_success) {
+		if (!safe_late_load || override_minrev)
+			add_taint(TAINT_CPU_OUT_OF_SPEC, LOCKDEP_STILL_OK);
+	}
 
 	return ret;
 }
@@ -857,9 +863,11 @@ static int __init microcode_init(void)
 
 	dentry_ucode = debugfs_create_dir("microcode", NULL);
 	debugfs_create_bool("donmi", 0644, dentry_ucode, &donmi);
+	debugfs_create_bool("override_minrev", 0644, dentry_ucode, &override_minrev);
 
 	pr_info("Microcode Update Driver: v%s.", DRIVER_VERSION);
 	pr_debug("NMI for sibling %s\n", donmi ? "enabled" : "disabled");
+	pr_debug("Override minrev %s\n", override_minrev ? "enabled" : "disabled");
 
 	return 0;
 
