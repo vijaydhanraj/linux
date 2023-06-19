@@ -23,6 +23,7 @@
 #include <linux/miscdevice.h>
 #include <linux/capability.h>
 #include <linux/firmware.h>
+#include <linux/debugfs.h>
 #include <linux/kernel.h>
 #include <linux/delay.h>
 #include <linux/mutex.h>
@@ -45,6 +46,8 @@
 static struct microcode_ops	*microcode_ops;
 static bool dis_ucode_ldr = true;
 
+static struct dentry *dentry_ucode;
+bool override_minrev;
 bool initrd_gone;
 
 LIST_HEAD(microcode_cache);
@@ -531,11 +534,14 @@ static ssize_t reload_store(struct device *dev,
 	/*
 	 * If safe loading indication isn't present, bail out.
 	 */
-	if (!safe_late_load) {
+	if (!safe_late_load || override_minrev) {
 		pr_err("Attempting late microcode loading - it is dangerous and taints the kernel.\n");
 		pr_err("You should switch to early loading.\n");
-		ret = -EINVAL;
-		goto unlock;
+
+		if (!override_minrev) {
+			ret = -EINVAL;
+			goto unlock;
+		}
 	}
 
 	mutex_lock(&microcode_mutex);
@@ -553,8 +559,10 @@ unlock:
 	cpus_read_unlock();
 
 	/* Taint only when loading was successful */
-	if (load_success && !safe_late_load)
-		add_taint(TAINT_CPU_OUT_OF_SPEC, LOCKDEP_STILL_OK);
+	if (load_success) {
+		if (!safe_late_load || override_minrev)
+			add_taint(TAINT_CPU_OUT_OF_SPEC, LOCKDEP_STILL_OK);
+	}
 
 	return ret;
 }
@@ -735,6 +743,10 @@ static int __init microcode_init(void)
 				  mc_cpu_starting, NULL);
 	cpuhp_setup_state_nocalls(CPUHP_AP_ONLINE_DYN, "x86/microcode:online",
 				  mc_cpu_online, mc_cpu_down_prep);
+
+	dentry_ucode = debugfs_create_dir("microcode", NULL);
+
+	debugfs_create_bool("override_minrev", 0644, dentry_ucode, &override_minrev);
 
 	pr_info("Microcode Update Driver: v%s.", DRIVER_VERSION);
 

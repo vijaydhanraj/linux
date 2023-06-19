@@ -250,6 +250,23 @@ late loading is permitted.
 	- current microcode revision in the CPU is >= the declared
 	  min_req_ver declared in the microcode header.
 
+Overriding Minimum Required Version
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+With the enforcement in place, it might take some time to fully transition
+to this new methodology.
+
+To help with the transition, there is a new debugfs tweak that user can set
+to bypass this enforcement::
+
+#echo Y > /sys/kernel/debug/microcode/override_minrev
+
+When the debugfs override is set, late-loading a microcode will taint the
+kernel::
+
+    #cat /proc/sys/kernel/tainted
+    4
+
 Builtin microcode
 =================
 

@@ -15,6 +15,7 @@ struct ucode_patch {
 };
 
 extern struct list_head microcode_cache;
+extern bool override_minrev;
 
 struct cpu_signature {
 	unsigned int sig;
