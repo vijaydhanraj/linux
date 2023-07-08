@@ -471,6 +471,7 @@ static ssize_t reload_store(struct device *dev,
 {
 	enum ucode_state tmp_ret = UCODE_OK;
 	int bsp = boot_cpu_data.cpu_index;
+	bool load_success = false;
 	unsigned long val;
 	ssize_t ret;
 
@@ -482,12 +483,12 @@ static ssize_t reload_store(struct device *dev,
 
 	ret = check_online_cpus();
 	if (ret)
-		goto put;
+		goto unlock;
 
 	tmp_ret = microcode_ops->request_microcode_fw(bsp, &microcode_pdev->dev);
 	if (tmp_ret != UCODE_NEW) {
 		ret = (tmp_ret == UCODE_NFOUND) ? -ENOENT : -EBADF;
-		goto put;
+		goto unlock;
 	}
 
 	mutex_lock(&microcode_mutex);
@@ -495,14 +496,18 @@ static ssize_t reload_store(struct device *dev,
 	mutex_unlock(&microcode_mutex);
 	if (ret) {
 		ret = -EIO;
-		goto put;
+		goto unlock;
 	}
+
+	load_success = true;
 	ret = size;
 
-put:
+unlock:
 	cpus_read_unlock();
 
-	add_taint(TAINT_CPU_OUT_OF_SPEC, LOCKDEP_STILL_OK);
+	/* Taint only when loading was successful */
+	if (load_success)
+		add_taint(TAINT_CPU_OUT_OF_SPEC, LOCKDEP_STILL_OK);
 
 	return ret;
 }
