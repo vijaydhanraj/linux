@@ -673,6 +673,7 @@ static enum ucode_state generic_load_microcode(int cpu, struct iov_iter *iter)
 		data = mc + sizeof(mc_header);
 		if (!copy_from_iter_full(data, data_size, iter) ||
 		    intel_microcode_sanity_check(mc, true, MC_HEADER_TYPE_MICROCODE) < 0) {
+			ret = UCODE_ERROR;
 			break;
 		}
 
@@ -690,7 +691,7 @@ static enum ucode_state generic_load_microcode(int cpu, struct iov_iter *iter)
 
 	vfree(mc);
 
-	if (iov_iter_count(iter)) {
+	if (iov_iter_count(iter) || ret == UCODE_ERROR) {
 		vfree(new_mc);
 		return UCODE_ERROR;
 	}
