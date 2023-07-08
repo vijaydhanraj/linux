@@ -493,12 +493,14 @@ static ssize_t reload_store(struct device *dev,
 	mutex_lock(&microcode_mutex);
 	ret = microcode_reload_late();
 	mutex_unlock(&microcode_mutex);
+	if (ret) {
+		ret = -EIO;
+		goto put;
+	}
+	ret = size;
 
 put:
 	cpus_read_unlock();
-
-	if (ret == 0)
-		ret = size;
 
 	add_taint(TAINT_CPU_OUT_OF_SPEC, LOCKDEP_STILL_OK);
 
