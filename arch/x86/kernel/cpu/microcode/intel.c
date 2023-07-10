@@ -348,12 +348,7 @@ static bool load_builtin_intel_microcode(struct cpio_data *cp)
 
 static void print_ucode_info(int old_rev, int new_rev, unsigned int date)
 {
-	pr_info_once("updated early: 0x%x -> 0x%x, date = %04x-%02x-%02x\n",
-		     old_rev,
-		     new_rev,
-		     date & 0xffff,
-		     date >> 24,
-		     (date >> 16) & 0xff);
+	pr_info_once("Early load succeeded, microcode revision: 0x%x -> 0x%x\n", old_rev, new_rev);
 }
 
 #ifdef CONFIG_X86_32
@@ -641,14 +636,8 @@ static enum ucode_state apply_microcode_intel(int cpu)
 		return UCODE_ERROR;
 	}
 
-	if (bsp && rev != prev_rev) {
-		pr_info("updated to revision 0x%x, date = %04x-%02x-%02x\n",
-			rev,
-			mc->hdr.date & 0xffff,
-			mc->hdr.date >> 24,
-			(mc->hdr.date >> 16) & 0xff);
+	if (bsp && rev != prev_rev)
 		prev_rev = rev;
-	}
 
 	ret = UCODE_UPDATED;
 
