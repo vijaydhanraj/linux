@@ -47,7 +47,7 @@ enum late_load_flags {
 };
 
 struct microcode_ops {
-	unsigned long control;
+	enum late_load_flags (*get_control_flags)(void);
 	enum ucode_state (*request_microcode_fw) (int cpu, struct device *);
 
 	void (*microcode_fini_cpu) (int cpu);
