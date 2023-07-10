@@ -151,4 +151,10 @@ static inline void reload_early_microcode(unsigned int cpu)	{ }
 static inline void microcode_bsp_resume(void)			{ }
 #endif
 
+#ifdef CONFIG_MICROCODE_LATE_LOADING
+extern void inform_ucode_mce_in_progress(void);
+#else
+static void inform_ucode_mce_in_progress(void) { }
+#endif
+
 #endif /* _ASM_X86_MICROCODE_H */
