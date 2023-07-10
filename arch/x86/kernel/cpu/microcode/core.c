@@ -406,6 +406,14 @@ static enum ucode_state apply_microcode(int cpu)
 	return err;
 }
 
+static atomic_t ucode_updating;
+static bool mce_in_progress;
+void noinstr inform_ucode_mce_in_progress(void)
+{
+	if (arch_atomic_read(&ucode_updating))
+		mce_in_progress = true;
+}
+
 /*
  * Returns:
  * < 0 - on error
@@ -486,7 +494,18 @@ static int microcode_reload_late(void)
 	 */
 	store_cpu_caps(&prev_info);
 
+	/* Track if MCE occurred during update */
+	mce_in_progress = false;
+	atomic_set(&ucode_updating, 1);
+
 	ret = stop_machine_cpuslocked(__reload_late, NULL, cpu_online_mask);
+
+	if (mce_in_progress) {
+		pr_warn("MCE occurred while microcode update was in progress\n");
+		mce_in_progress = false;
+	}
+	atomic_set(&ucode_updating, 0);
+
 	if (!ret) {
 		pr_info("Reload succeeded, microcode revision: 0x%x -> 0x%x\n",
 			old, boot_cpu_data.microcode);
