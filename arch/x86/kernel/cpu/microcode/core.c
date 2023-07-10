@@ -452,7 +452,7 @@ wait_for_siblings:
 	if (__wait_for_cpus(&late_cpus_out, NSEC_PER_SEC))
 		panic("Timeout during microcode update!\n");
 
-	load_both = microcode_ops->control & LATE_LOAD_BOTH;
+	load_both = microcode_ops->get_control_flags() & LATE_LOAD_BOTH;
 	/*
 	 * The lead thread has completed update on each core.
 	 * For others, simply update the per-cpu cpuinfo
@@ -501,7 +501,7 @@ static int microcode_reload_late(void)
 
 static bool is_lateload_safe(void)
 {
-	return (microcode_ops->control & LATE_LOAD_SAFE);
+	return (microcode_ops->get_control_flags() & LATE_LOAD_SAFE);
 }
 
 static ssize_t reload_store(struct device *dev,
@@ -581,7 +581,7 @@ unlock:
 static ssize_t control_show(struct device *dev,
 			    struct device_attribute *attr, char *buf)
 {
-	return sprintf(buf, "0x%lx\n", microcode_ops->control);
+	return sprintf(buf, "0x%x\n", microcode_ops->get_control_flags());
 }
 
 static DEVICE_ATTR_WO(reload);
