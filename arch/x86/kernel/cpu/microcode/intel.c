@@ -48,6 +48,7 @@ static int llc_size_per_core;
 /* Vendor specific ucode control flags */
 static enum late_load_flags intel_ucode_control;
 
+static bool early_load_ap_failed;
 /*
  * Returns 1 if update has been found, 0 otherwise.
  */
@@ -515,6 +516,7 @@ void load_ucode_intel_ap(void)
 {
 	struct microcode_intel *patch, **iup;
 	struct ucode_cpu_info uci;
+	int ret;
 
 	if (IS_ENABLED(CONFIG_X86_32))
 		iup = (struct microcode_intel **) __pa_nodebug(&intel_ucode_patch);
@@ -531,7 +533,9 @@ void load_ucode_intel_ap(void)
 
 	uci.mc = *iup;
 
-	apply_microcode_early(&uci, true);
+	ret = apply_microcode_early(&uci, true);
+	if (ret < 0 && !early_load_ap_failed)
+		early_load_ap_failed = true;
 }
 
 static struct microcode_intel *find_patch(struct ucode_cpu_info *uci)
@@ -577,6 +581,9 @@ static void intel_set_control_flags (enum late_load_flags flags) {
 }
 
 static enum late_load_flags intel_get_control_flags (void) {
+	if (early_load_ap_failed)
+		return intel_ucode_control & ~LATE_LOAD_SAFE;
+
 	return intel_ucode_control;
 }
 
