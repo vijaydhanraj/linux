@@ -50,6 +50,7 @@ static struct dentry            *dentry_ucode;
 static bool dis_ucode_ldr = true;
 bool donmi = true;
 bool override_minrev;
+bool ucode_load_same;
 
 bool initrd_gone;
 
@@ -642,8 +643,17 @@ static ssize_t reload_store(struct device *dev,
 
 	tmp_ret = microcode_ops->request_microcode_fw(bsp, &microcode_pdev->dev);
 	if (tmp_ret != UCODE_NEW) {
-		ret = (tmp_ret == UCODE_NFOUND) ? -ENOENT : -EBADF;
-		goto unlock;
+		if (tmp_ret == UCODE_ERROR) {
+			ret = -EBADF;
+			goto unlock;
+		}
+
+		if (tmp_ret == UCODE_NFOUND && !ucode_load_same) {
+			ret = -ENOENT;
+			goto unlock;
+		}
+
+		pr_warn("Force loading same microcode\n");
 	}
 
 	safe_late_load = is_lateload_safe();
@@ -864,10 +874,12 @@ static int __init microcode_init(void)
 	dentry_ucode = debugfs_create_dir("microcode", NULL);
 	debugfs_create_bool("donmi", 0644, dentry_ucode, &donmi);
 	debugfs_create_bool("override_minrev", 0644, dentry_ucode, &override_minrev);
+	debugfs_create_bool("load_same", 0644, dentry_ucode, &ucode_load_same);
 
 	pr_info("Microcode Update Driver: v%s.", DRIVER_VERSION);
 	pr_debug("NMI for sibling %s\n", donmi ? "enabled" : "disabled");
 	pr_debug("Override minrev %s\n", override_minrev ? "enabled" : "disabled");
+	pr_debug("ucode_load_same is %s\n", ucode_load_same ? "enabled" : "disabled");
 
 	return 0;
 
