@@ -621,7 +621,7 @@ static enum ucode_state apply_microcode_intel(int cpu)
 	 * already.
 	 */
 	rev = intel_get_microcode_revision();
-	if (rev >= mc->hdr.rev) {
+	if (rev >= mc->hdr.rev && !ucode_load_same) {
 		ret = UCODE_OK;
 		goto out;
 	}
@@ -704,7 +704,7 @@ static enum ucode_state generic_load_microcode(int cpu, struct iov_iter *iter)
 
 		csig = uci->cpu_sig.sig;
 		cpf = uci->cpu_sig.pf;
-		if (has_newer_microcode(mc, csig, cpf, new_rev)) {
+		if (ucode_load_same || has_newer_microcode(mc, csig, cpf, new_rev)) {
 			vfree(new_mc);
 			new_rev = mc_header.rev;
 			new_mc  = mc;
@@ -721,8 +721,10 @@ static enum ucode_state generic_load_microcode(int cpu, struct iov_iter *iter)
 		return UCODE_ERROR;
 	}
 
-	if (!new_mc)
+	if (!new_mc) {
+		pr_debug("Newer microcode not found, check your microcode version\n");
 		return UCODE_NFOUND;
+	}
 
 	vfree(uci->mc);
 	uci->mc = (struct microcode_intel *)new_mc;
