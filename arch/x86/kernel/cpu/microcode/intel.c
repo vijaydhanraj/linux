@@ -42,11 +42,29 @@ static const char ucode_path[] = "kernel/x86/microcode/GenuineIntel.bin";
 /* Current microcode patch used in early patching on the APs. */
 static struct microcode_intel *applied_ucode;
 
+/*
+ * Holds the microcode read from the file system and is yet to be applied to
+ * the CPU. This allows post_apply() to free it in case the applying microcode
+ * fails.
+ */
+static struct microcode_intel *unapplied_ucode;
+
 /* last level cache size per core */
 static int llc_size_per_core;
 
 /* Vendor specific ucode control flags */
 static enum late_load_flags intel_ucode_control;
+
+static inline void clear_ucode_store(struct microcode_intel **ucode)
+{
+	*ucode = NULL;
+}
+
+static void free_ucode_store(struct microcode_intel **ucode)
+{
+	kfree(*ucode);
+	clear_ucode_store(ucode);
+}
 
 /*
  * Returns 1 if update has been found, 0 otherwise.
@@ -159,7 +177,7 @@ scan_microcode(void *data, size_t size, struct ucode_cpu_info *uci, bool save)
 		}
 
 		if (save) {
-			save_microcode_patch(&applied_ucode, data, mc_size);
+			save_microcode_patch(&unapplied_ucode, data, mc_size);
 			goto next;
 		}
 
@@ -245,23 +263,6 @@ static void show_saved_mc(void *mc)
 		ext_sig++;
 	}
 #endif
-}
-
-/*
- * Save this microcode patch. It will be loaded early when a CPU is
- * hot-added or resumes.
- */
-static void save_mc_for_early(struct ucode_cpu_info *uci, u8 *mc, unsigned int size)
-{
-	/* Synchronization during CPU hotplug. */
-	static DEFINE_MUTEX(x86_cpu_microcode_mutex);
-
-	mutex_lock(&x86_cpu_microcode_mutex);
-
-	save_microcode_patch(&applied_ucode, mc, size);
-	show_saved_mc(mc);
-
-	mutex_unlock(&x86_cpu_microcode_mutex);
 }
 
 static bool load_builtin_intel_microcode(struct cpio_data *cp)
@@ -388,7 +389,7 @@ int __init save_microcode_in_initrd_intel(void)
 	 * update that pointer too, with a stable patch address to use when
 	 * resuming the cores.
 	 */
-	applied_ucode = NULL;
+	unapplied_ucode = NULL;
 
 	if (!load_builtin_intel_microcode(&cp))
 		cp = find_microcode_in_initrd(ucode_path, false);
@@ -400,7 +401,7 @@ int __init save_microcode_in_initrd_intel(void)
 
 	scan_microcode(cp.data, cp.size, &uci, true);
 
-	show_saved_mc(applied_ucode);
+	show_saved_mc(unapplied_ucode);
 
 	return 0;
 }
@@ -473,7 +474,7 @@ void load_ucode_intel_ap(void)
 
 static struct microcode_intel *find_patch(void)
 {
-	return applied_ucode;
+	return unapplied_ucode ? unapplied_ucode : applied_ucode;
 }
 
 void reload_ucode_intel(void)
@@ -656,17 +657,26 @@ static enum ucode_state generic_load_microcode(int cpu, struct iov_iter *iter)
 	vfree(uci->mc);
 	uci->mc = (struct microcode_intel *)new_mc;
 
-	/*
-	 * If early loading microcode is supported, save this mc into
-	 * permanent memory. So it will be loaded early when a CPU is hot added
-	 * or resumes.
-	 */
-	save_mc_for_early(uci, new_mc, new_mc_size);
+	save_microcode_patch(&unapplied_ucode, new_mc, new_mc_size);
 
 	pr_debug("CPU%d found a matching microcode update with version 0x%x (current=0x%x)\n",
 		 cpu, new_rev, uci->cpu_sig.rev);
 
 	return ret;
+}
+
+static void post_apply_intel(bool apply_state)
+{
+	/*
+	 * If apply was successful, then move from unapplied to applied_ucode
+	 */
+	if (apply_state) {
+		free_ucode_store(&applied_ucode);
+		applied_ucode = unapplied_ucode;
+		clear_ucode_store(&unapplied_ucode);
+	} else {
+		free_ucode_store(&unapplied_ucode);
+	}
 }
 
 static bool is_blacklisted(unsigned int cpu)
@@ -728,6 +738,7 @@ static struct microcode_ops microcode_intel_ops = {
 	.collect_cpu_info                 = collect_cpu_info,
 	.apply_microcode                  = apply_microcode_intel,
 	.get_current_rev                  = intel_get_microcode_revision,
+	.post_apply                       = post_apply_intel,
 };
 
 static int __init calc_llc_size_per_core(struct cpuinfo_x86 *c)
