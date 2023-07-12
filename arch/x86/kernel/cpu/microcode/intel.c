@@ -889,6 +889,9 @@ static void setup_mcu_enumeration(void)
 		return;
 
 	rdmsrl(MSR_MCU_ENUM, mcu_cap.data);
+
+	if (mcu_cap.uniform_available)
+		intel_set_control_flags(LATE_LOAD_NMI_SAFE);
 }
 
 struct microcode_ops * __init init_intel_microcode(void)
