@@ -30,6 +30,7 @@
 #include <linux/uio.h>
 #include <linux/mm.h>
 #include <linux/bitops.h>
+#include <linux/debugfs.h>
 
 #include <asm/microcode_intel.h>
 #include <asm/intel-family.h>
@@ -42,6 +43,9 @@
 #include "doe.h"
 
 static const char ucode_path[] = "kernel/x86/microcode/GenuineIntel.bin";
+
+static bool ucode_staging = true;
+extern struct dentry *dentry_ucode;
 
 /* Current microcode patch used in early patching on the APs. */
 static struct microcode_intel *applied_ucode;
@@ -889,7 +893,7 @@ static enum ucode_state perform_staging(void)
 	struct work_struct *work;
 	int cpu, i;
 
-	if (!mcu_cap.staging_supported)
+	if (!mcu_cap.staging_supported || !ucode_staging)
 		return UCODE_OK;
 
 	for (i = 0; i < mcu_staging.mbox_num; i++) {
@@ -1088,6 +1092,12 @@ static void setup_mcu_enumeration(void)
 		mcu_staging.mboxes   = kcalloc(mcu_staging.mbox_num,
 					       sizeof(*mcu_staging.mboxes),
 					       GFP_KERNEL);
+
+		if (!dentry_ucode)
+			dentry_ucode = debugfs_create_dir("microcode", NULL);
+
+		debugfs_create_bool("ucode_staging", 0644, dentry_ucode,
+				    &ucode_staging);
 	}
 }
 

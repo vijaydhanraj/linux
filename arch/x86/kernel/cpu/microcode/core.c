@@ -44,9 +44,10 @@
 #define DRIVER_VERSION	"2.2"
 
 static struct microcode_ops	*microcode_ops;
+
 static bool dis_ucode_ldr = true;
 
-static struct dentry *dentry_ucode;
+struct dentry *dentry_ucode;
 bool override_minrev;
 bool ucode_load_same;
 
@@ -844,7 +845,8 @@ static int __init microcode_init(void)
 	cpuhp_setup_state_nocalls(CPUHP_AP_ONLINE_DYN, "x86/microcode:online",
 				  mc_cpu_online, mc_cpu_down_prep);
 
-	dentry_ucode = debugfs_create_dir("microcode", NULL);
+	if (!dentry_ucode)
+		dentry_ucode = debugfs_create_dir("microcode", NULL);
 
 	debugfs_create_bool("override_minrev", 0644, dentry_ucode, &override_minrev);
 	debugfs_create_bool("load_same", 0644, dentry_ucode, &ucode_load_same);
