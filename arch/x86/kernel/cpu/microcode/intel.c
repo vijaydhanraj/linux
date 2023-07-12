@@ -453,28 +453,51 @@ void __init load_ucode_intel_bsp(void)
 	apply_microcode_early(&uci, true);
 }
 
+static bool early_load_ap_failed;
 void load_ucode_intel_ap(void)
 {
 	struct microcode_intel **iup;
 	struct ucode_cpu_info uci;
 	struct ucode_info patch = {0};
+	int ret;
 
 	if (IS_ENABLED(CONFIG_X86_32))
 		iup = (struct microcode_intel **)__pa_nodebug(&applied_ucode);
 	else
 		iup = &applied_ucode;
 
+	/*
+	 * Stop scanning and applying microcode after the first failure which
+	 * clears the applied_ucode.
+	 */
+	if (early_load_ap_failed)
+		return;
+
 	if (!*iup) {
 		patch = __load_ucode_intel(&uci);
 		if (!patch.ucode)
 			return;
-
-		*iup = patch.ucode;
+		/*
+		 * Copy the patch to kernel memory so that it can be freed
+		 * later when we receive newer patch during late loading.
+		 */
+		save_microcode_patch(&unapplied_ucode, patch.ucode, patch.size);
+		*iup = unapplied_ucode;
+		clear_ucode_store(&unapplied_ucode);
 	}
 
 	uci.mc = *iup;
 
-	apply_microcode_early(&uci, true);
+	ret = apply_microcode_early(&uci, true);
+
+	/*
+	 * Even if one cpu fails applying microcode, clear applied_ucode and
+	 * cache when late loading succeeds.
+	 */
+	if (ret < 0 && !early_load_ap_failed) {
+		early_load_ap_failed = true;
+		free_ucode_store(&applied_ucode);
+	}
 }
 
 static struct microcode_intel *find_patch(void)
