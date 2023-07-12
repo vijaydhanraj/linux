@@ -104,6 +104,55 @@ static void free_ucode_store(struct microcode_intel **ucode)
 	clear_ucode_store(ucode);
 }
 
+static enum ucode_load_scope get_load_scope(void)
+{
+	/*
+	 * If no capability is found, default to CORE scope
+	 */
+	if (!mcu_cap.uniform_available)
+		return CORE_SCOPE;
+
+	/*
+	 * If enumeration requires UNIFORM and the platform configuration
+	 * is not complete, disable any further attempt to late loading.
+	 */
+	if (mcu_cap.cfg_required && !mcu_cap.cfg_completed)
+		return NO_LATE_UPDATE;
+
+	if (mcu_cap.uniform_scope == UNIFORM_PLATFORM)
+		return PLATFORM_SCOPE;
+
+	if (mcu_cap.uniform_scope == UNIFORM_PACKAGE)
+		return PACKAGE_SCOPE;
+
+	return CORE_SCOPE;
+}
+
+static enum ucode_state get_apply_status(void)
+{
+	enum ucode_state ret = UCODE_UPDATED;
+	union mcu_status status;
+
+	if (!mcu_cap.data)
+		return ret;
+
+	status.data = 0;
+	rdmsrl(MSR_MCU_STATUS, status.data);
+
+	/*
+	 * AUTH_FAIL is evil, best to trigger reset
+	 * PARTIAL update is ok, but OS policy is TBD.
+	 */
+	if (status.auth_fail)
+		ret = UCODE_UPDATED_AUTH;
+	else if (status.partial)
+		ret = UCODE_UPDATED_PART;
+	else if (!status.post_bios_mcu)
+		ret = UCODE_ERROR;
+
+	return ret;
+}
+
 /*
  * Returns 1 if update has been found, 0 otherwise.
  */
@@ -640,6 +689,7 @@ static enum ucode_state apply_microcode_intel(int cpu)
 out:
 	uci->cpu_sig.rev = rev;
 
+	ret = get_apply_status();
 	return ret;
 }
 
@@ -795,6 +845,7 @@ static enum ucode_state request_microcode_fw(int cpu, struct device *device)
 
 static struct microcode_ops microcode_intel_ops = {
 	.get_control_flags                = intel_get_control_flags,
+	.get_load_scope                   = get_load_scope,
 	.request_microcode_fw             = request_microcode_fw,
 	.collect_cpu_info                 = collect_cpu_info,
 	.apply_microcode                  = apply_microcode_intel,
@@ -814,12 +865,22 @@ static int __init calc_llc_size_per_core(struct cpuinfo_x86 *c)
 static void setup_mcu_enumeration(void)
 {
 	u64 arch_cap;
+	union mcu_status status;
 
 	arch_cap = x86_read_arch_cap_msr();
 	if (!(arch_cap & ARCH_CAP_MCU_ENUM))
 		return;
 
 	rdmsrl(MSR_MCU_ENUM, mcu_cap.data);
+
+	if (mcu_cap.uniform_available) {
+		pr_info_once("Microcode Uniform Update Capability detected\n");
+
+		status.data = 0;
+		rdmsrl(MSR_MCU_STATUS, status.data);
+		if (!status.post_bios_mcu)
+			pr_warn("WARNING: Post bios update not successful! Contact BIOS Vendor.\n");
+	}
 }
 
 struct microcode_ops * __init init_intel_microcode(void)

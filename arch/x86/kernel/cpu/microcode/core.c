@@ -406,6 +406,31 @@ static enum ucode_state apply_microcode(int cpu)
 	return err;
 }
 
+static enum ucode_load_scope load_scope;
+static enum ucode_load_scope get_load_scope(void)
+{
+	if (!load_scope) {
+		load_scope = microcode_ops->get_load_scope ?
+				microcode_ops->get_load_scope() : CORE_SCOPE;
+	}
+
+	return load_scope;
+}
+
+static int get_target_cpu(int cpu)
+{
+	switch (load_scope) {
+	case CORE_SCOPE:
+		return cpumask_first(topology_sibling_cpumask(cpu));
+	case PACKAGE_SCOPE:
+		return cpumask_first(topology_core_cpumask(cpu));
+	case PLATFORM_SCOPE:
+		return cpumask_first(cpu_online_mask);
+	default:
+		return 0;
+	}
+}
+
 static atomic_t ucode_updating;
 static bool mce_in_progress;
 void noinstr inform_ucode_mce_in_progress(void)
@@ -421,7 +446,7 @@ void noinstr inform_ucode_mce_in_progress(void)
  */
 static int __reload_late(void *info)
 {
-	int cpu = smp_processor_id();
+	int first_cpu, cpu = smp_processor_id();
 	enum ucode_state err;
 	bool lead_thread;
 	bool load_both;
@@ -441,7 +466,8 @@ static int __reload_late(void *info)
 	 * loading attempts happen on multiple threads of an SMT core. See
 	 * below.
 	 */
-	if (cpumask_first(topology_sibling_cpumask(cpu)) == cpu) {
+	first_cpu = get_target_cpu(cpu);
+	if (first_cpu == cpu) {
 		lead_thread = true;
 		err = apply_microcode(cpu);
 	} else {
@@ -533,10 +559,18 @@ static ssize_t reload_store(struct device *dev,
 	bool load_success = false;
 	unsigned long val;
 	ssize_t ret;
+	enum ucode_load_scope load_scope;
 
 	ret = kstrtoul(buf, 0, &val);
 	if (ret || val != 1)
 		return -EINVAL;
+
+	load_scope = get_load_scope();
+	if (load_scope == NO_LATE_UPDATE) {
+		pr_err_once("Platform doesn't support late loading!\n");
+		pr_err_once("Please contact your BIOS vendor\n");
+		return size;
+	}
 
 	cpus_read_lock();
 
