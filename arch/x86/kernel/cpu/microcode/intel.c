@@ -32,6 +32,7 @@
 
 #include <asm/microcode_intel.h>
 #include <asm/intel-family.h>
+#include <asm/msr-index.h>
 #include <asm/processor.h>
 #include <asm/tlbflush.h>
 #include <asm/setup.h>
@@ -56,6 +57,38 @@ struct ucode_info {
 
 /* last level cache size per core */
 static int llc_size_per_core;
+
+enum scope {
+	UNIFORM_CORE     = 0x02, // Core Scope
+	UNIFORM_PACKAGE  = 0x80, // Package Scope
+	UNIFORM_PLATFORM = 0xC0, // Platform Scope
+};
+
+union mcu_enumeration {
+	u64	data;
+	struct {
+		u64	uniform_available:1;
+		u64	cfg_required:1;
+		u64	cfg_completed:1;
+		u64	reserved:5;
+		u64	uniform_scope:8;
+	};
+};
+
+union mcu_status {
+	u64	data;
+	struct {
+		u64	partial:1;
+		u64	auth_fail:1;
+		u64	rsvd:1;
+		u64	post_bios_mcu:1;
+	};
+};
+
+#define MSR_MCU_ENUM		(0x7b)
+#define MSR_MCU_STATUS		(0x7c)
+
+static union mcu_enumeration mcu_cap;
 
 /* Vendor specific ucode control flags */
 static enum late_load_flags intel_ucode_control;
@@ -778,6 +811,17 @@ static int __init calc_llc_size_per_core(struct cpuinfo_x86 *c)
 	return (int)llc_size;
 }
 
+static void setup_mcu_enumeration(void)
+{
+	u64 arch_cap;
+
+	arch_cap = x86_read_arch_cap_msr();
+	if (!(arch_cap & ARCH_CAP_MCU_ENUM))
+		return;
+
+	rdmsrl(MSR_MCU_ENUM, mcu_cap.data);
+}
+
 struct microcode_ops * __init init_intel_microcode(void)
 {
 	struct cpuinfo_x86 *c = &boot_cpu_data;
@@ -790,6 +834,8 @@ struct microcode_ops * __init init_intel_microcode(void)
 
 	llc_size_per_core = calc_llc_size_per_core(c);
 	intel_set_control_flags(LATE_LOAD_SAFE);
+
+	setup_mcu_enumeration();
 
 	return &microcode_intel_ops;
 }
