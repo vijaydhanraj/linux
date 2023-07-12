@@ -451,6 +451,8 @@ static int __reload_late(void *info)
 	bool lead_thread;
 	bool load_both;
 	int ret = 0;
+	struct cpuinfo_x86 *bsp_info = &boot_cpu_data;
+	struct cpuinfo_x86 *this_cpu_info;
 
 	/*
 	 * Wait for all CPUs to arrive. A load will not be attempted unless all
@@ -497,6 +499,14 @@ wait_for_siblings:
 			apply_microcode(cpu);
 		else
 			update_cpuinfo_x86(cpu);
+	}
+
+	/* When Uniform update is enabled, check if update applied on all CPUs */
+	this_cpu_info = &cpu_data(cpu);
+	if (load_scope > CORE_SCOPE &&  this_cpu_info->microcode != bsp_info->microcode) {
+		pr_err("Microcode Revision for CPU %d = 0x%x doesn't match BSP rev 0x%x\n",
+		       cpu, this_cpu_info->microcode, bsp_info->microcode);
+		ret = -1;
 	}
 
 	return ret;
