@@ -269,6 +269,15 @@ scan_microcode(void *data, size_t size, struct ucode_cpu_info *uci, bool save)
 		}
 
 		if (!patch.ucode) {
+			/*
+			 * Save patch even if it matches what's loaded.
+			 * This is done for platforms supporting uniform update,
+			 * so that APs can store the ucode patch found during
+			 * early load.
+			 */
+			if (uci->cpu_sig.rev == mc_header->rev)
+				goto save;
+
 			if (!has_newer_microcode(data,
 						 uci->cpu_sig.sig,
 						 uci->cpu_sig.pf,
@@ -285,7 +294,7 @@ scan_microcode(void *data, size_t size, struct ucode_cpu_info *uci, bool save)
 				goto next;
 		}
 
-		/* We have a newer patch, save it. */
+save:
 		patch.ucode = data;
 		patch.size = mc_size;
 
