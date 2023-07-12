@@ -49,6 +49,11 @@ static struct microcode_intel *applied_ucode;
  */
 static struct microcode_intel *unapplied_ucode;
 
+struct ucode_info {
+	struct microcode_intel *ucode;
+	int size;
+};
+
 /* last level cache size per core */
 static int llc_size_per_core;
 
@@ -151,11 +156,11 @@ static int __is_lateload_safe(struct microcode_header_intel *mc_header)
  * Get microcode matching with BSP's model. Only CPUs with the same model as
  * BSP can stay in the platform.
  */
-static struct microcode_intel *
+static struct ucode_info
 scan_microcode(void *data, size_t size, struct ucode_cpu_info *uci, bool save)
 {
 	struct microcode_header_intel *mc_header;
-	struct microcode_intel *patch = NULL;
+	struct ucode_info patch = {0};
 	unsigned int mc_size;
 
 	while (size) {
@@ -183,7 +188,7 @@ scan_microcode(void *data, size_t size, struct ucode_cpu_info *uci, bool save)
 			goto next;
 		}
 
-		if (!patch) {
+		if (!patch.ucode) {
 			if (!has_newer_microcode(data,
 						 uci->cpu_sig.sig,
 						 uci->cpu_sig.pf,
@@ -191,7 +196,7 @@ scan_microcode(void *data, size_t size, struct ucode_cpu_info *uci, bool save)
 				goto next;
 
 		} else {
-			struct microcode_header_intel *phdr = &patch->hdr;
+			struct microcode_header_intel *phdr = &patch.ucode->hdr;
 
 			if (!has_newer_microcode(data,
 						 phdr->sig,
@@ -201,14 +206,12 @@ scan_microcode(void *data, size_t size, struct ucode_cpu_info *uci, bool save)
 		}
 
 		/* We have a newer patch, save it. */
-		patch = data;
+		patch.ucode = data;
+		patch.size = mc_size;
 
 next:
 		data += mc_size;
 	}
-
-	if (size)
-		return NULL;
 
 	return patch;
 }
@@ -411,11 +414,12 @@ int __init save_microcode_in_initrd_intel(void)
 /*
  * @res_patch, output: a pointer to the patch we found.
  */
-static struct microcode_intel *__load_ucode_intel(struct ucode_cpu_info *uci)
+static struct ucode_info __load_ucode_intel(struct ucode_cpu_info *uci)
 {
 	static const char *path;
 	struct cpio_data cp;
 	bool use_pa;
+	struct ucode_info patch = {0};
 
 	if (IS_ENABLED(CONFIG_X86_32)) {
 		path	  = (const char *)__pa_nodebug(ucode_path);
@@ -430,7 +434,7 @@ static struct microcode_intel *__load_ucode_intel(struct ucode_cpu_info *uci)
 		cp = find_microcode_in_initrd(path, use_pa);
 
 	if (!(cp.data && cp.size))
-		return NULL;
+		return patch;
 
 	intel_cpu_collect_info(uci);
 
@@ -439,22 +443,23 @@ static struct microcode_intel *__load_ucode_intel(struct ucode_cpu_info *uci)
 
 void __init load_ucode_intel_bsp(void)
 {
-	struct microcode_intel *patch;
+	struct ucode_info patch;
 	struct ucode_cpu_info uci;
 
 	patch = __load_ucode_intel(&uci);
-	if (!patch)
+	if (!patch.ucode)
 		return;
 
-	uci.mc = patch;
+	uci.mc = patch.ucode;
 
 	apply_microcode_early(&uci, true);
 }
 
 void load_ucode_intel_ap(void)
 {
-	struct microcode_intel *patch, **iup;
+	struct microcode_intel **iup;
 	struct ucode_cpu_info uci;
+	struct ucode_info patch = {0};
 	int ret;
 
 	if (IS_ENABLED(CONFIG_X86_32))
@@ -464,10 +469,10 @@ void load_ucode_intel_ap(void)
 
 	if (!*iup) {
 		patch = __load_ucode_intel(&uci);
-		if (!patch)
+		if (!patch.ucode)
 			return;
 
-		*iup = patch;
+		*iup = patch.ucode;
 	}
 
 	uci.mc = *iup;
