@@ -828,6 +828,7 @@ static int mc_cpu_down_prep(unsigned int cpu)
 	return 0;
 }
 
+static atomic_t ucode_hp_status;
 static void setup_online_cpu(struct work_struct *work)
 {
 	int cpu = smp_processor_id();
@@ -838,6 +839,9 @@ static void setup_online_cpu(struct work_struct *work)
 		pr_err("Error applying microcode on CPU%d\n", cpu);
 		return;
 	}
+
+	if (err == UCODE_UPDATED)
+		atomic_inc(&ucode_hp_status);
 
 	mc_cpu_online(cpu);
 }
@@ -860,6 +864,7 @@ static int __init microcode_init(void)
 	struct device *dev_root;
 	struct cpuinfo_x86 *c = &boot_cpu_data;
 	int error;
+	int ret;
 
 	if (dis_ucode_ldr)
 		return -EINVAL;
@@ -889,7 +894,14 @@ static int __init microcode_init(void)
 	}
 
 	/* Do per-CPU setup */
-	schedule_on_each_cpu(setup_online_cpu);
+	atomic_set(&ucode_hp_status, 0);
+	ret = schedule_on_each_cpu(setup_online_cpu);
+
+	/* Update cached ucode to reflect the recently applied ucode */
+	if (!ret && atomic_read(&ucode_hp_status) &&
+	    microcode_ops->post_apply) {
+		microcode_ops->post_apply(true);
+	}
 
 	register_syscore_ops(&mc_syscore_ops);
 	cpuhp_setup_state_nocalls(CPUHP_AP_MICROCODE_LOADER, "x86/microcode:starting",
