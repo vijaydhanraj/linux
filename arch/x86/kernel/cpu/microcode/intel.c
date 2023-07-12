@@ -29,6 +29,7 @@
 #include <linux/cpu.h>
 #include <linux/uio.h>
 #include <linux/mm.h>
+#include <linux/bitops.h>
 
 #include <asm/microcode_intel.h>
 #include <asm/intel-family.h>
@@ -37,6 +38,8 @@
 #include <asm/tlbflush.h>
 #include <asm/setup.h>
 #include <asm/msr.h>
+
+#include "doe.h"
 
 static const char ucode_path[] = "kernel/x86/microcode/GenuineIntel.bin";
 
@@ -70,7 +73,9 @@ union mcu_enumeration {
 		u64	uniform_available:1;
 		u64	cfg_required:1;
 		u64	cfg_completed:1;
-		u64	reserved:5;
+		u64	rsvd:1;
+		u64	staging_supported:1;
+		u64	reserved:3;
 		u64	uniform_scope:8;
 	};
 };
@@ -85,10 +90,33 @@ union mcu_status {
 	};
 };
 
+/**
+ * struct mcu_staging -  Information of per package staging mailbox instances
+ *
+ * @mboxes    : Array of per package staging mailbox instances
+ * @work      : Work to stage microcode
+ * @scheduled : Whether the work to stage microcode is scheduled
+ * @creating  : Whether the mailbox instance is being created
+ * @result    : Result of microcode staging by @work
+ * @mbox_num  : Number of staging mailbox instances
+ */
+struct mcu_staging {
+	struct {
+		struct uc_doe_mbox *mbox;
+		struct work_struct work;
+		bool scheduled;
+		unsigned long creating;
+		enum ucode_state result;
+	} *mboxes;
+	int mbox_num;
+};
+
 #define MSR_MCU_ENUM		(0x7b)
 #define MSR_MCU_STATUS		(0x7c)
+#define MSR_MCU_MBOX_ADDR	(0x7a5)
 
 static union mcu_enumeration mcu_cap;
+static struct mcu_staging mcu_staging;
 
 /* Vendor specific ucode control flags */
 static enum late_load_flags intel_ucode_control;
@@ -622,6 +650,37 @@ static enum late_load_flags intel_get_control_flags(void)
 	return intel_ucode_control;
 }
 
+static void collect_staging_mailbox(int cpu)
+{
+	struct uc_doe_mbox *mbox;
+	u64 mbox_addr;
+	int i;
+
+	if (!mcu_cap.staging_supported)
+		return;
+
+	i = topology_physical_package_id(cpu);
+
+	/* Avoid multiple mailbox instances per package */
+	if (test_and_set_bit(0, &mcu_staging.mboxes[i].creating))
+		return;
+
+	if (mcu_staging.mboxes[i].mbox)
+		goto out;
+
+	rdmsrl(MSR_MCU_MBOX_ADDR, mbox_addr);
+	if (!mbox_addr)
+		goto out;
+
+	mbox = uc_doe_create_mbox(mbox_addr);
+	if (!mbox)
+		goto out;
+
+	mcu_staging.mboxes[i].mbox = mbox;
+out:
+	clear_bit(0, &mcu_staging.mboxes[i].creating);
+}
+
 static int collect_cpu_info(int cpu_num, struct cpu_signature *csig)
 {
 	struct cpuinfo_x86 *c = &cpu_data(cpu_num);
@@ -642,6 +701,8 @@ static int collect_cpu_info(int cpu_num, struct cpu_signature *csig)
 
 	c->microcode = intel_get_microcode_revision();
 	csig->rev = c->microcode;
+
+	collect_staging_mailbox(cpu_num);
 
 	return 0;
 }
@@ -785,6 +846,102 @@ static enum ucode_state generic_load_microcode(int cpu, struct iov_iter *iter)
 	return ret;
 }
 
+static void do_staging(struct work_struct *work)
+{
+	int i, cpu = smp_processor_id();
+	struct ucode_cpu_info *uci;
+	struct microcode_intel *mc;
+	struct uc_doe_mbox *mbox;
+
+	uci = ucode_cpu_info + cpu;
+	i = topology_physical_package_id(cpu);
+
+	mc = find_patch();
+	if (!mc) {
+		mc = uci->mc;
+		if (!mc) {
+			mcu_staging.mboxes[i].result = UCODE_NFOUND;
+			return;
+		}
+	}
+
+	if (uci->cpu_sig.rev >= mc->hdr.rev && !override_minrev) {
+		mcu_staging.mboxes[i].result  = UCODE_OK;
+		return;
+	}
+
+	mbox = mcu_staging.mboxes[i].mbox;
+
+	/* Need to include the external header */
+	if (uc_doe_stage_ucode(mbox, mc, mc->hdr.totalsize)) {
+		mcu_staging.mboxes[i].result = UCODE_ERROR;
+		return;
+	}
+
+	mcu_staging.mboxes[i].result = UCODE_OK;
+
+	pr_debug("Microcode is staged for package %d\n", i);
+}
+
+static enum ucode_state perform_staging(void)
+{
+	enum ucode_state ret = UCODE_OK;
+	struct work_struct *work;
+	int cpu, i;
+
+	if (!mcu_cap.staging_supported)
+		return UCODE_OK;
+
+	for (i = 0; i < mcu_staging.mbox_num; i++) {
+		mcu_staging.mboxes[i].scheduled = false;
+		mcu_staging.mboxes[i].result = UCODE_OK;
+	}
+
+	for_each_online_cpu(cpu) {
+		i = topology_physical_package_id(cpu);
+
+		if (!mcu_staging.mboxes[i].mbox)
+			continue;
+
+		if (mcu_staging.mboxes[i].scheduled)
+			continue;
+
+		mcu_staging.mboxes[i].scheduled = true;
+
+		work = &mcu_staging.mboxes[i].work;
+		INIT_WORK(work, do_staging);
+		schedule_work_on(cpu, work);
+	}
+
+	for (i = 0; i < mcu_staging.mbox_num; i++) {
+		if (!mcu_staging.mboxes[i].scheduled)
+			continue;
+
+		work = &mcu_staging.mboxes[i].work;
+		flush_work(work);
+
+		if (ret < mcu_staging.mboxes[i].result)
+			ret = mcu_staging.mboxes[i].result;
+
+		mcu_staging.mboxes[i].scheduled = false;
+	}
+
+	return ret;
+}
+
+static int pre_apply_intel(void)
+{
+	int ret;
+
+	ret = perform_staging();
+	if (ret == UCODE_ERROR || ret == UCODE_NFOUND) {
+		pr_err("Error staging microcode\n");
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 static void post_apply_intel(bool apply_state)
 {
 	/*
@@ -797,6 +954,37 @@ static void post_apply_intel(bool apply_state)
 	} else {
 		free_ucode_store(&unapplied_ucode);
 	}
+}
+
+static void release_staging_mailbox(int cpu)
+{
+	struct uc_doe_mbox *mbox;
+	int i, cpus;
+
+	if (!mcu_cap.staging_supported)
+		return;
+
+	i = topology_physical_package_id(cpu);
+	mbox = mcu_staging.mboxes[i].mbox;
+	if (!mbox)
+		return;
+
+	/* The number of online CPUs of current package */
+	cpus = cpumask_weight_and(topology_core_cpumask(cpu), cpu_online_mask);
+
+	/*
+	 * If current CPU is the last online CPU of current package,
+	 * release the staging mailbox instance.
+	 */
+	if (cpus == 1) {
+		uc_doe_destroy_mbox(mbox);
+		mcu_staging.mboxes[i].mbox = NULL;
+	}
+}
+
+static void microcode_fini_cpu_intel(int cpu)
+{
+	release_staging_mailbox(cpu);
 }
 
 static bool is_blacklisted(unsigned int cpu)
@@ -859,7 +1047,9 @@ static struct microcode_ops microcode_intel_ops = {
 	.collect_cpu_info                 = collect_cpu_info,
 	.apply_microcode                  = apply_microcode_intel,
 	.get_current_rev                  = intel_get_microcode_revision,
+	.pre_apply                        = pre_apply_intel,
 	.post_apply                       = post_apply_intel,
+	.microcode_fini_cpu               = microcode_fini_cpu_intel,
 };
 
 static int __init calc_llc_size_per_core(struct cpuinfo_x86 *c)
@@ -889,6 +1079,15 @@ static void setup_mcu_enumeration(void)
 		rdmsrl(MSR_MCU_STATUS, status.data);
 		if (!status.post_bios_mcu)
 			pr_warn("WARNING: Post bios update not successful! Contact BIOS Vendor.\n");
+	}
+
+	if (mcu_cap.staging_supported) {
+		pr_info_once("Microcode Staging Capability detected\n");
+
+		mcu_staging.mbox_num = topology_max_packages();
+		mcu_staging.mboxes   = kcalloc(mcu_staging.mbox_num,
+					       sizeof(*mcu_staging.mboxes),
+					       GFP_KERNEL);
 	}
 }
 
