@@ -61,6 +61,7 @@ struct microcode_ops {
 	enum ucode_state (*request_microcode_fw) (int cpu, struct device *);
 
 	void (*microcode_fini_cpu) (int cpu);
+	int (*pre_apply)(void);
 	void (*post_apply)(bool success);
 
 	/*
