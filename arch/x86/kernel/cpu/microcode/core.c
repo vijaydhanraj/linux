@@ -620,7 +620,11 @@ static ssize_t reload_store(struct device *dev,
 
 	mutex_lock(&microcode_mutex);
 
-	ret = microcode_reload_late();
+	if (microcode_ops->pre_apply)
+		ret = microcode_ops->pre_apply();
+
+	if (!ret)
+		ret = microcode_reload_late();
 
 	if (microcode_ops->post_apply)
 		microcode_ops->post_apply(!ret);
@@ -723,7 +727,14 @@ static struct syscore_ops mc_syscore_ops = {
 
 static int mc_cpu_starting(unsigned int cpu)
 {
-	enum ucode_state err = apply_microcode(cpu);
+	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
+	enum ucode_state err;
+
+	memset(uci, 0, sizeof(*uci));
+
+	microcode_ops->collect_cpu_info(cpu, &uci->cpu_sig);
+
+	err = microcode_ops->apply_microcode(cpu);
 
 	pr_debug("%s: CPU%d, err: %d\n", __func__, cpu, err);
 
