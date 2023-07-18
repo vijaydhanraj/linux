@@ -77,7 +77,7 @@ union mcu_enumeration {
 		u64	uniform_available:1;
 		u64	cfg_required:1;
 		u64	cfg_completed:1;
-		u64	rsvd:1;
+		u64	rollback_supported:1;
 		u64	staging_supported:1;
 		u64	reserved:3;
 		u64	uniform_scope:8;
@@ -92,6 +92,70 @@ union mcu_status {
 		u64	rsvd:1;
 		u64	post_bios_mcu:1;
 	};
+};
+
+/*
+ * MSR's related to deferred commit architecture
+ */
+#define MSR_MCU_CONFIG		(0x7a0)
+#define MSR_MCU_COMMIT		(0x7a1)
+#define MSR_MCU_INFO		(0x7a2)
+
+/* MSR_MCU_CONFIG */
+union svn_config {
+	u64	data;
+	struct {
+		u64	lock:1;
+		u64	defer_svn:1;
+		u64	rsvd:62;
+	};
+};
+
+/* MSR_MCU_COMMIT */
+union svn_commit {
+	u64	data;
+	struct {
+		u64	commit_svn:1;
+		u64	rsvd:63;
+	};
+};
+
+/* MSR_MCU_SVN_INFO */
+union svn_info {
+	u64	data;
+	struct {
+		u64	committed_mcu_svn:16;
+		u64	pending_mcu_svn:16;
+		u64	rsvd:32;
+	};
+};
+
+/*
+ * MSR's related to rollback architecture
+ */
+#define MSR_MCU_ROLLBACK_MIN_ID	(0x7a4)
+
+/* MSR_MCU_ROLLBACK_MIN_ID */
+union rollback_min_id {
+	u64	data;
+	struct {
+		u64	min_rev_id:32;
+		u64	rsvd:32;
+	};
+};
+
+/* Rollback metadata block */
+struct rb_svn_info {
+	u32	mcu_svn:16;
+	u32	min_mcu_svn:16;
+};
+
+#define NUM_RB_INFO	16
+struct ucode_meta {
+	struct	metadata_header	rb_hdr;
+	struct  rb_svn_info svn_info;
+	u32	rollback_id[NUM_RB_INFO];
+	u16	rollback_svn[NUM_RB_INFO];
 };
 
 /**
@@ -1099,6 +1163,9 @@ static void setup_mcu_enumeration(void)
 		debugfs_create_bool("ucode_staging", 0644, dentry_ucode,
 				    &ucode_staging);
 	}
+
+	if (mcu_cap.rollback_supported)
+		pr_info_once("Microcode Rollback Capability detected\n");
 }
 
 struct microcode_ops * __init init_intel_microcode(void)
