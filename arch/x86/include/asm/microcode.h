@@ -55,14 +55,19 @@ enum late_load_flags {
 	LATE_LOAD_MAX       = BIT(__LATE_LOAD_MAX)
 };
 
+enum reload_type {
+	RELOAD_COMMIT,
+	RELOAD_INVALID,
+};
+
 struct microcode_ops {
 	enum late_load_flags (*get_control_flags)(void);
 	enum ucode_load_scope (*get_load_scope)(void);
 	enum ucode_state (*request_microcode_fw) (int cpu, struct device *);
 
 	void (*microcode_fini_cpu) (int cpu);
-	int (*pre_apply)(void);
-	void (*post_apply)(bool success);
+	int (*pre_apply)(enum reload_type type);
+	void (*post_apply)(enum reload_type type, bool success);
 
 	/*
 	 * The generic 'microcode_core' part guarantees that

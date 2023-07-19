@@ -158,6 +158,11 @@ struct ucode_meta {
 	u16	rollback_svn[NUM_RB_INFO];
 };
 
+enum commit_cfg {
+	AUTO_COMMIT = 0,
+	MANUAL_COMMIT
+};
+
 /**
  * struct mcu_staging -  Information of per package staging mailbox instances
  *
@@ -188,6 +193,87 @@ static struct mcu_staging mcu_staging;
 
 /* Vendor specific ucode control flags */
 static enum late_load_flags intel_ucode_control;
+
+static bool pending_commit;
+static void read_commit_status(struct work_struct *work)
+{
+	union svn_commit commit;
+
+	rdmsrl(MSR_MCU_COMMIT, commit.data);
+	if (commit.commit_svn && !pending_commit)
+		pending_commit = 1;
+}
+
+static int check_pending(void)
+{
+	int ret = 0;
+
+	pending_commit = 0;
+	ret = schedule_on_each_cpu_locked(read_commit_status);
+
+	if (!ret && pending_commit) {
+		pr_err("Pending commit, Please commit before proceeding\n");
+		ret = -EBUSY;
+	}
+
+	return ret;
+}
+
+static long read_msr_mcu_config(void *arg)
+{
+	union svn_config *cfg = arg;
+
+	rdmsrl(MSR_MCU_CONFIG, cfg->data);
+	return 0;
+}
+
+static long write_msr_mcu_config(void *arg)
+{
+	union svn_config *cfg = arg;
+
+	wrmsrl(MSR_MCU_CONFIG, cfg->data);
+	return 0;
+}
+
+static int switch_mcu_commit_config(bool commit_cfg)
+{
+	union svn_config cfg;
+	int ret, cpu, first_cpu;
+
+	if (!mcu_cap.rollback_supported)
+		return 0;
+
+	ret = check_pending();
+	if (ret)
+		return ret;
+
+	for_each_online_cpu(cpu) {
+		first_cpu = cpumask_first(topology_core_cpumask(cpu));
+		if (cpu != first_cpu)
+			continue;
+
+		cfg.data = 0;
+		work_on_cpu(cpu, read_msr_mcu_config, &cfg);
+
+		if (cfg.defer_svn == commit_cfg)
+			continue;
+
+		/*
+		 * Admin has locked commit mode configuration, it is not a
+		 * preferred setting since booting a new kernel via kexec()
+		 * will not know how to deal in case of manual commit.
+		 */
+		if (cfg.lock) {
+			pr_err_once("mcu commit configuration locked, can't switch!\n");
+			return -EBUSY;
+		}
+
+		cfg.defer_svn = commit_cfg;
+		work_on_cpu(cpu, write_msr_mcu_config, &cfg);
+	}
+
+	return ret;
+}
 
 static inline void clear_ucode_store(struct microcode_intel **ucode)
 {
@@ -997,9 +1083,19 @@ static enum ucode_state perform_staging(void)
 	return ret;
 }
 
-static int pre_apply_intel(void)
+static int pre_apply_intel(enum reload_type type)
 {
 	int ret;
+
+	switch (type) {
+	case RELOAD_COMMIT:
+		ret = switch_mcu_commit_config(AUTO_COMMIT);
+		if (ret)
+			return ret;
+		break;
+	default:
+		return -EINVAL;
+	}
 
 	ret = perform_staging();
 	if (ret == UCODE_ERROR || ret == UCODE_NFOUND) {
@@ -1010,17 +1106,24 @@ static int pre_apply_intel(void)
 	return 0;
 }
 
-static void post_apply_intel(bool apply_state)
+static void post_apply_intel(enum reload_type type, bool apply_state)
 {
-	/*
-	 * If apply was successful, then move from unapplied to applied_ucode
-	 */
-	if (apply_state) {
-		free_ucode_store(&applied_ucode);
-		applied_ucode = unapplied_ucode;
-		clear_ucode_store(&unapplied_ucode);
-	} else {
-		free_ucode_store(&unapplied_ucode);
+	switch (type) {
+	case RELOAD_COMMIT:
+		/*
+		 * If apply was successful, then move from unapplied to applied_ucode
+		 */
+		if (apply_state) {
+			free_ucode_store(&applied_ucode);
+			applied_ucode = unapplied_ucode;
+			clear_ucode_store(&unapplied_ucode);
+		} else {
+			free_ucode_store(&unapplied_ucode);
+		}
+		break;
+
+	default:
+		return;
 	}
 }
 
