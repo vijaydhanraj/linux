@@ -242,6 +242,17 @@ static int check_pending(void)
 	return ret;
 }
 
+static bool check_pending_commits(void)
+{
+	int ret;
+
+	if (!mcu_cap.rollback_supported)
+		return false;
+
+	ret = check_pending();
+	return (ret == 0 ? false : true);
+}
+
 static long read_msr_mcu_config(void *arg)
 {
 	union svn_config *cfg = arg;
@@ -1141,6 +1152,49 @@ static enum ucode_state perform_staging(void)
 	return ret;
 }
 
+static  bool commit_status;
+static void do_commit(struct work_struct *work)
+{
+	union svn_commit commit;
+
+	if (!mcu_cap.rollback_supported)
+		return;
+
+	commit.data = 0;
+	rdmsrl(MSR_MCU_COMMIT, commit.data);
+
+	/* Nothing to commit */
+	if (!commit.commit_svn)
+		return;
+
+	commit.data = 0;
+	commit.commit_svn = 1;
+	wrmsrl(MSR_MCU_COMMIT, commit.data);
+
+	commit.data = 0;
+	rdmsrl(MSR_MCU_COMMIT, commit.data);
+
+	if (commit.commit_svn && !commit_status)
+		commit_status = 1;
+}
+
+static int perform_commit(void)
+{
+	int ret;
+
+	commit_status = 0;
+	ret = schedule_on_each_cpu_locked(do_commit);
+
+	if (!ret && !commit_status) {
+		free_ucode_store(&committed_ucode);
+		committed_ucode = applied_ucode;
+		return ret;
+	}
+
+	pr_err("Commit failed: Pending commit\n");
+	return -EBUSY;
+}
+
 static int pre_apply_intel(enum reload_type type)
 {
 	int ret;
@@ -1358,7 +1412,7 @@ static bool check_ucode_constraints(enum reload_type type)
 	return true;
 }
 
-static enum ucode_state request_microcode_fw(int cpu, struct device *device)
+static enum ucode_state request_microcode_fw(int cpu, struct device *device, enum reload_type type)
 {
 	struct cpuinfo_x86 *c = &cpu_data(cpu);
 	const struct firmware *firmware;
@@ -1366,8 +1420,6 @@ static enum ucode_state request_microcode_fw(int cpu, struct device *device)
 	enum ucode_state ret;
 	struct kvec kvec;
 	char name[30];
-	/* TODO: Remove after staging all reload nocommit changes */
-	enum reload_type type = RELOAD_COMMIT;
 
 	if (is_blacklisted(cpu))
 		return UCODE_NFOUND;
@@ -1413,6 +1465,8 @@ static enum ucode_state request_microcode_fw(int cpu, struct device *device)
 static struct microcode_ops microcode_intel_ops = {
 	.get_control_flags                = intel_get_control_flags,
 	.get_load_scope                   = get_load_scope,
+	.check_pending_commits            = check_pending_commits,
+	.perform_commit                   = perform_commit,
 	.request_microcode_fw             = request_microcode_fw,
 	.collect_cpu_info                 = collect_cpu_info,
 	.apply_microcode                  = apply_microcode_intel,

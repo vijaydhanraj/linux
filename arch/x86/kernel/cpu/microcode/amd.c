@@ -913,7 +913,8 @@ static enum ucode_state load_microcode_amd(u8 family, const u8 *data, size_t siz
  *
  * These might be larger than 2K.
  */
-static enum ucode_state request_microcode_amd(int cpu, struct device *device)
+static enum ucode_state request_microcode_amd(int cpu, struct device *device,
+					      enum reload_type type __maybe_unused)
 {
 	char fw_name[36] = "amd-ucode/microcode_amd.bin";
 	struct cpuinfo_x86 *c = &cpu_data(cpu);

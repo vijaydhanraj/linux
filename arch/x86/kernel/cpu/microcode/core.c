@@ -560,20 +560,19 @@ static bool is_lateload_safe(void)
 	return (microcode_ops->get_control_flags() & LATE_LOAD_SAFE);
 }
 
-static ssize_t reload_store(struct device *dev,
-			    struct device_attribute *attr,
-			    const char *buf, size_t size)
+static ssize_t reload_store_common(struct device *dev,
+				   struct device_attribute *attr,
+				   const char *buf, size_t size,
+				   enum reload_type type)
 {
 	enum ucode_state tmp_ret = UCODE_OK;
 	int bsp = boot_cpu_data.cpu_index;
 	bool safe_late_load;
 	bool load_success = false;
-	unsigned long val;
 	ssize_t ret;
 	enum ucode_load_scope load_scope;
 
-	ret = kstrtoul(buf, 0, &val);
-	if (ret || val != 1)
+	if (type != RELOAD_COMMIT && type != RELOAD_NO_COMMIT)
 		return -EINVAL;
 
 	load_scope = get_load_scope();
@@ -589,7 +588,7 @@ static ssize_t reload_store(struct device *dev,
 	if (ret)
 		goto unlock;
 
-	tmp_ret = microcode_ops->request_microcode_fw(bsp, &microcode_pdev->dev);
+	tmp_ret = microcode_ops->request_microcode_fw(bsp, &microcode_pdev->dev, type);
 	if (tmp_ret != UCODE_NEW) {
 		if (tmp_ret == UCODE_ERROR) {
 			ret = -EBADF;
@@ -622,13 +621,13 @@ static ssize_t reload_store(struct device *dev,
 	mutex_lock(&microcode_mutex);
 
 	if (microcode_ops->pre_apply)
-		ret = microcode_ops->pre_apply(RELOAD_COMMIT);
+		ret = microcode_ops->pre_apply(type);
 
 	if (!ret)
 		ret = microcode_reload_late();
 
 	if (microcode_ops->post_apply)
-		microcode_ops->post_apply(RELOAD_COMMIT, !ret);
+		microcode_ops->post_apply(type, !ret);
 
 	mutex_unlock(&microcode_mutex);
 	if (ret) {
@@ -651,14 +650,87 @@ unlock:
 	return ret;
 }
 
+static ssize_t reload_nc_store(struct device *dev,
+			       struct device_attribute *attr,
+			       const char *buf, size_t size)
+{
+	unsigned long val;
+	ssize_t ret = 0;
+
+	ret = kstrtoul(buf, 0, &val);
+	if (ret || val != 1)
+		return -EINVAL;
+
+	return reload_store_common(dev, attr, buf, size, RELOAD_NO_COMMIT);
+}
+
+static ssize_t reload_store(struct device *dev,
+			    struct device_attribute *attr,
+			    const char *buf, size_t size)
+{
+	unsigned long val;
+	ssize_t ret;
+
+	ret = kstrtoul(buf, 0, &val);
+	if (ret || val != 1)
+		return -EINVAL;
+
+	return reload_store_common(dev, attr, buf, size, RELOAD_COMMIT);
+}
+
 static ssize_t control_show(struct device *dev,
 			    struct device_attribute *attr, char *buf)
 {
 	return sprintf(buf, "0x%x\n", microcode_ops->get_control_flags());
 }
 
+static ssize_t commit_show(struct device *dev,
+			   struct device_attribute *attr, char *buf)
+{
+	bool ret = 0;
+
+	cpus_read_lock();
+
+	if (microcode_ops->check_pending_commits)
+		ret = microcode_ops->check_pending_commits();
+
+	cpus_read_unlock();
+
+	return sprintf(buf, "%d\n", ret ? 1 : 0);
+}
+
+static ssize_t commit_store(struct device *dev,
+			    struct device_attribute *attr,
+			    const char *buf, size_t size)
+{
+	unsigned long val;
+	ssize_t ret;
+
+	ret = kstrtoul(buf, 0, &val);
+	if (ret || val != 1)
+		return -EINVAL;
+
+	cpus_read_lock();
+	ret = check_online_cpus();
+	if (ret)
+		goto unlock;
+
+	mutex_lock(&microcode_mutex);
+	if (microcode_ops->perform_commit)
+		ret = microcode_ops->perform_commit();
+	if (!ret)
+		ret = size;
+	mutex_unlock(&microcode_mutex);
+
+unlock:
+	cpus_read_unlock();
+	return ret;
+}
+
 static DEVICE_ATTR_WO(reload);
+static DEVICE_ATTR_WO(reload_nc);
 static DEVICE_ATTR_RO(control);
+static DEVICE_ATTR_RW(commit);
 #endif
 
 static ssize_t version_show(struct device *dev,
@@ -787,7 +859,9 @@ static void setup_online_cpu(struct work_struct *work)
 static struct attribute *cpu_root_microcode_attrs[] = {
 #ifdef CONFIG_MICROCODE_LATE_LOADING
 	&dev_attr_reload.attr,
+	&dev_attr_reload_nc.attr,
 	&dev_attr_control.attr,
+	&dev_attr_commit.attr,
 #endif
 	NULL
 };

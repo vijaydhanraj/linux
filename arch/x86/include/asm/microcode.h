@@ -64,7 +64,10 @@ enum reload_type {
 struct microcode_ops {
 	enum late_load_flags (*get_control_flags)(void);
 	enum ucode_load_scope (*get_load_scope)(void);
-	enum ucode_state (*request_microcode_fw) (int cpu, struct device *);
+	enum ucode_state (*request_microcode_fw)(int cpu, struct device *device,
+						 enum reload_type type);
+	bool (*check_pending_commits)(void);
+	int (*perform_commit)(void);
 
 	void (*microcode_fini_cpu) (int cpu);
 	int (*pre_apply)(enum reload_type type);
