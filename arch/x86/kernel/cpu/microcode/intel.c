@@ -1462,11 +1462,17 @@ static enum ucode_state request_microcode_fw(int cpu, struct device *device, enu
 	return ret;
 }
 
+static bool is_rollback_supported(void)
+{
+	return mcu_cap.rollback_supported;
+}
+
 static struct microcode_ops microcode_intel_ops = {
 	.get_control_flags                = intel_get_control_flags,
 	.get_load_scope                   = get_load_scope,
 	.check_pending_commits            = check_pending_commits,
 	.perform_commit                   = perform_commit,
+	.is_rollback_supported            = is_rollback_supported,
 	.request_microcode_fw             = request_microcode_fw,
 	.collect_cpu_info                 = collect_cpu_info,
 	.apply_microcode                  = apply_microcode_intel,

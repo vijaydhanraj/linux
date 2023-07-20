@@ -859,9 +859,16 @@ static void setup_online_cpu(struct work_struct *work)
 static struct attribute *cpu_root_microcode_attrs[] = {
 #ifdef CONFIG_MICROCODE_LATE_LOADING
 	&dev_attr_reload.attr,
-	&dev_attr_reload_nc.attr,
 	&dev_attr_control.attr,
+#endif
+	NULL
+};
+
+static struct attribute *cpu_root_mc_rollback_attrs[] = {
+#ifdef CONFIG_MICROCODE_LATE_LOADING
+	&dev_attr_reload_nc.attr,
 	&dev_attr_commit.attr,
+	NULL,
 #endif
 	NULL
 };
@@ -876,7 +883,8 @@ static int __init microcode_init(void)
 	struct device *dev_root;
 	struct cpuinfo_x86 *c = &boot_cpu_data;
 	int error;
-	int ret;
+	int ret, i;
+	bool rollback_supported;
 
 	if (dis_ucode_ldr)
 		return -EINVAL;
@@ -902,6 +910,15 @@ static int __init microcode_init(void)
 		if (error) {
 			pr_err("Error creating microcode group!\n");
 			goto out_pdev;
+		}
+	}
+
+	rollback_supported = (microcode_ops->is_rollback_supported) ?
+				microcode_ops->is_rollback_supported() : false;
+	if (rollback_supported) {
+		for (i = 0; cpu_root_mc_rollback_attrs[i]; i++) {
+			sysfs_add_file_to_group(&dev_root->kobj,
+						cpu_root_mc_rollback_attrs[i], "microcode");
 		}
 	}
 

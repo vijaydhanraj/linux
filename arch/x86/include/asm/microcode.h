@@ -68,6 +68,7 @@ struct microcode_ops {
 						 enum reload_type type);
 	bool (*check_pending_commits)(void);
 	int (*perform_commit)(void);
+	bool (*is_rollback_supported)(void);
 
 	void (*microcode_fini_cpu) (int cpu);
 	int (*pre_apply)(enum reload_type type);
