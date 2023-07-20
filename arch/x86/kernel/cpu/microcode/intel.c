@@ -47,7 +47,15 @@ static const char ucode_path[] = "kernel/x86/microcode/GenuineIntel.bin";
 static bool ucode_staging = true;
 extern struct dentry *dentry_ucode;
 
-/* Current microcode patch used in early patching on the APs. */
+/*
+ * Holds the microcode whose SVN is committed.
+ */
+static struct microcode_intel *committed_ucode;
+
+/*
+ * Always hold the currently applied microcode in the CPU. mc->hdr.rev
+ * should match whats in the CPU revision MSR but SVN may not be committed yet.
+ */
 static struct microcode_intel *applied_ucode;
 
 /*
@@ -188,11 +196,26 @@ struct mcu_staging {
 #define MSR_MCU_STATUS		(0x7c)
 #define MSR_MCU_MBOX_ADDR	(0x7a5)
 
+#define META_TYPE_ROLLBACK	(0x2)
+
 static union mcu_enumeration mcu_cap;
 static struct mcu_staging mcu_staging;
 
 /* Vendor specific ucode control flags */
 static enum late_load_flags intel_ucode_control;
+
+union rollback_min_id rollback_rev;
+
+static union svn_info bsp_svn_info;
+static void save_bsp_svn_info(void)
+{
+	if (!mcu_cap.rollback_supported)
+		return;
+
+	rdmsrl(MSR_MCU_INFO, bsp_svn_info.data);
+	pr_debug("committed_svn: 0x%x pending_svn: 0x%x\n",
+		 bsp_svn_info.committed_mcu_svn, bsp_svn_info.pending_mcu_svn);
+}
 
 static bool pending_commit;
 static void read_commit_status(struct work_struct *work)
@@ -487,6 +510,25 @@ next:
 	return patch;
 }
 
+#ifdef DEBUG
+static void dump_rollback_meta(struct ucode_meta *rb)
+{
+	int i;
+
+	pr_debug("Type    : 0x%x\n", rb->rb_hdr.type);
+	pr_debug("Block SZ: 0x%x\n", rb->rb_hdr.blk_size);
+	pr_debug("MCU SVN : 0x%x\n", rb->svn_info.mcu_svn);
+	pr_debug("Min SVN : 0x%x\n", rb->svn_info.min_mcu_svn);
+
+	for (i = 0; i < NUM_RB_INFO; i++) {
+		if (!rb->rollback_id[i])
+			break;
+		pr_debug("Rollback[%d]: ID: 0x%x SVN 0x%x\n", i, rb->rollback_id[i],
+			 rb->rollback_svn[i]);
+	}
+}
+#endif
+
 static void show_saved_mc(void *mc)
 {
 #ifdef DEBUG
@@ -496,6 +538,7 @@ static void show_saved_mc(void *mc)
 	struct extended_signature *ext_sig;
 	struct ucode_cpu_info uci;
 	int j, ext_sigcount;
+	struct ucode_meta *rb_meta;
 
 	if (!ucode) {
 		pr_debug("no microcode data saved.\n");
@@ -520,6 +563,10 @@ static void show_saved_mc(void *mc)
 	pr_debug("mc_saved: sig=0x%x, pf=0x%x, rev=0x%x, total size=0x%x, date = %04x-%02x-%02x\n",
 		 sig, pf, rev, total_size, date & 0xffff,
 		 date >> 24, (date >> 16) & 0xff);
+
+	rb_meta = (struct ucode_meta *)intel_microcode_find_meta_data(mc, META_TYPE_ROLLBACK);
+	if (rb_meta)
+		dump_rollback_meta(rb_meta);
 
 	/* Look for ext. headers: */
 	if (total_size <= data_size + MC_HEADER_SIZE)
@@ -727,6 +774,7 @@ void __init load_ucode_intel_bsp(void)
 }
 
 static bool early_load_ap_failed;
+static bool ucode_committed;
 void load_ucode_intel_ap(void)
 {
 	struct microcode_intel **iup;
@@ -770,6 +818,14 @@ void load_ucode_intel_ap(void)
 	if (ret < 0 && !early_load_ap_failed) {
 		early_load_ap_failed = true;
 		free_ucode_store(&applied_ucode);
+		free_ucode_store(&committed_ucode);
+		return;
+	}
+
+	/* Promote from applied to committed ucode after successful apply */
+	if (!ucode_committed) {
+		committed_ucode = applied_ucode;
+		ucode_committed = true;
 	}
 }
 
@@ -905,8 +961,10 @@ static enum ucode_state apply_microcode_intel(int cpu)
 		return UCODE_ERROR;
 	}
 
-	if (bsp && rev != prev_rev)
+	if (bsp && rev != prev_rev) {
 		prev_rev = rev;
+		save_bsp_svn_info();
+	}
 
 	ret = UCODE_UPDATED;
 
@@ -1093,6 +1151,19 @@ static int pre_apply_intel(enum reload_type type)
 		if (ret)
 			return ret;
 		break;
+	case RELOAD_NO_COMMIT:
+		if (!mcu_cap.rollback_supported)
+			return -EINVAL;
+
+		if (!committed_ucode) {
+			pr_debug("Defer Commit: no prior microcode, can't continue...\n");
+			return -ENOENT;
+		}
+
+		ret = switch_mcu_commit_config(MANUAL_COMMIT);
+		if (ret)
+			return ret;
+		break;
 	default:
 		return -EINVAL;
 	}
@@ -1116,12 +1187,25 @@ static void post_apply_intel(enum reload_type type, bool apply_state)
 		if (apply_state) {
 			free_ucode_store(&applied_ucode);
 			applied_ucode = unapplied_ucode;
+			committed_ucode = applied_ucode;
 			clear_ucode_store(&unapplied_ucode);
 		} else {
 			free_ucode_store(&unapplied_ucode);
 		}
 		break;
-
+	case RELOAD_NO_COMMIT:
+		if (apply_state) {
+			/*
+			 * Don't free applied_ucode yet as committed_ucode is
+			 * may also be pointing to the same microcode. We can
+			 * free it once the microcode is committed.
+			 */
+			applied_ucode = unapplied_ucode;
+			clear_ucode_store(&unapplied_ucode);
+		} else {
+			free_ucode_store(&unapplied_ucode);
+		}
+		break;
 	default:
 		return;
 	}
@@ -1181,6 +1265,99 @@ static bool is_blacklisted(unsigned int cpu)
 	return false;
 }
 
+static bool check_svn_update(struct ucode_meta *rb_meta)
+{
+	if (rb_meta->svn_info.mcu_svn < bsp_svn_info.committed_mcu_svn) {
+		pr_err("MCU SVN 0x%x less than CPU SVN 0x%x, can't update\n",
+		       rb_meta->svn_info.mcu_svn, bsp_svn_info.committed_mcu_svn);
+		return false;
+	}
+
+	return true;
+}
+
+static bool is_ucode_listed(struct ucode_meta *rb_meta)
+{
+	//int i;
+	int cpu = raw_smp_processor_id();
+	struct ucode_cpu_info *uci;
+	int rev, svn;
+
+	uci = ucode_cpu_info + cpu;
+	rev = uci->cpu_sig.rev;
+	svn = bsp_svn_info.committed_mcu_svn;
+
+#if 0
+	for (i = 0; i < NUM_RB_INFO; i++) {
+		if (!rb_meta->rollback_id[i])
+			return false;
+		if (rb_meta->rollback_id[i] == rev && rb_meta->rollback_svn[i] == svn)
+			return true;
+	}
+#endif
+
+	/*
+	 * FIXME: Current ucode doesn't populate rollback_id and rollback_svn and
+	 * so always return true. (must be false)
+	 */
+	return true;
+}
+
+static bool can_do_nocommit(struct ucode_meta *rb_meta)
+{
+	if (!check_svn_update(rb_meta))
+		return false;
+
+	if (!is_ucode_listed(rb_meta))
+		return false;
+
+	/*
+	 * From the spec POV, it is actually OK to manually commit(defer commit) microcode whose
+	 * min svn is greater than the current cpu svn. But this will make rollback impossible
+	 * as now cpu svn will be set to microcode's min svn and we cannot load mcu with svn lower
+	 * than cpu svn.
+	 */
+	if (rb_meta->svn_info.min_mcu_svn > bsp_svn_info.committed_mcu_svn) {
+		pr_err("MCU MIN SVN 0x%x greater than CPU SVN 0x%x, can't update\n",
+		       rb_meta->svn_info.min_mcu_svn, bsp_svn_info.committed_mcu_svn);
+		return false;
+	}
+
+	return true;
+}
+
+static bool check_ucode_constraints(enum reload_type type)
+{
+	struct ucode_meta *rb_meta;
+	struct microcode_header_intel *mc_header = (struct microcode_header_intel *)unapplied_ucode;
+
+	if (mc_header->rev < rollback_rev.min_rev_id) {
+		pr_err("Microcode Revision 0x%x less than 0x%x (Post BIOS rev)\n",
+		       mc_header->rev, rollback_rev.min_rev_id);
+		return false;
+	}
+
+	if (check_pending())
+		return false;
+
+	/*
+	 * If platform supports architectural rollback, microcode is
+	 * expected to have rollback meta data.
+	 */
+	rb_meta = (struct ucode_meta *)intel_microcode_find_meta_data((void *)unapplied_ucode,
+								      META_TYPE_ROLLBACK);
+	if (!rb_meta)
+		return false;
+
+	if (type == RELOAD_NO_COMMIT && !can_do_nocommit(rb_meta))
+		return false;
+
+	if (type == RELOAD_COMMIT && !check_svn_update(rb_meta))
+		return false;
+
+	return true;
+}
+
 static enum ucode_state request_microcode_fw(int cpu, struct device *device)
 {
 	struct cpuinfo_x86 *c = &cpu_data(cpu);
@@ -1189,12 +1366,29 @@ static enum ucode_state request_microcode_fw(int cpu, struct device *device)
 	enum ucode_state ret;
 	struct kvec kvec;
 	char name[30];
+	/* TODO: Remove after staging all reload nocommit changes */
+	enum reload_type type = RELOAD_COMMIT;
 
 	if (is_blacklisted(cpu))
 		return UCODE_NFOUND;
 
 	sprintf(name, "intel-ucode/%02x-%02x-%02x",
 		c->x86, c->x86_model, c->x86_stepping);
+
+	/*
+	 * This allows fetching a production ucode that might not be committed by OS,
+	 * but loaded from BIOS directly from the built-in firmware path or initrd.
+	 * This may be needed in case we need to rollback.
+	 */
+	if (type == RELOAD_NO_COMMIT) {
+		if (!committed_ucode) {
+			pr_err("No original ucode found!\n");
+			pr_err("Ensure original ucode is either part of initrd or built-in fw path\n");
+			return UCODE_ERROR;
+		}
+		sprintf(name, "intel-ucode/stage/%02x-%02x-%02x",
+			c->x86, c->x86_model, c->x86_stepping);
+	}
 
 	if (request_firmware_direct(&firmware, name, device)) {
 		pr_debug("data file %s load failed\n", name);
@@ -1206,7 +1400,12 @@ static enum ucode_state request_microcode_fw(int cpu, struct device *device)
 	iov_iter_kvec(&iter, ITER_SOURCE, &kvec, 1, firmware->size);
 	ret = generic_load_microcode(cpu, &iter);
 
+	if (ret == UCODE_NEW && mcu_cap.rollback_supported && !check_ucode_constraints(type))
+		ret = UCODE_ERROR;
+
 	release_firmware(firmware);
+	if (ret == UCODE_ERROR)
+		free_ucode_store(&unapplied_ucode);
 
 	return ret;
 }
@@ -1267,8 +1466,15 @@ static void setup_mcu_enumeration(void)
 				    &ucode_staging);
 	}
 
-	if (mcu_cap.rollback_supported)
+	if (mcu_cap.rollback_supported) {
 		pr_info_once("Microcode Rollback Capability detected\n");
+
+		/* Store the minimum mcu revision for rollback */
+		rollback_rev.data = 0;
+		rdmsrl(MSR_MCU_ROLLBACK_MIN_ID, rollback_rev.data);
+
+		save_bsp_svn_info();
+	}
 }
 
 struct microcode_ops * __init init_intel_microcode(void)

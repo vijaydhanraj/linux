@@ -57,6 +57,7 @@ enum late_load_flags {
 
 enum reload_type {
 	RELOAD_COMMIT,
+	RELOAD_NO_COMMIT,
 	RELOAD_INVALID,
 };
 
