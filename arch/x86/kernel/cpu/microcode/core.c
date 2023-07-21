@@ -397,11 +397,11 @@ static void update_cpuinfo_x86(int cpu)
 		boot_cpu_data.microcode = c->microcode;
 }
 
-static enum ucode_state apply_microcode(int cpu)
+static enum ucode_state apply_microcode(int cpu, enum reload_type type)
 {
 	enum ucode_state err;
 
-	err = microcode_ops->apply_microcode(cpu);
+	err = microcode_ops->apply_microcode(cpu, type);
 	update_cpuinfo_x86(cpu);
 
 	return err;
@@ -454,6 +454,7 @@ static int __reload_late(void *info)
 	int ret = 0;
 	struct cpuinfo_x86 *bsp_info = &boot_cpu_data;
 	struct cpuinfo_x86 *this_cpu_info;
+	enum reload_type *type = info;
 
 	/*
 	 * Wait for all CPUs to arrive. A load will not be attempted unless all
@@ -472,7 +473,7 @@ static int __reload_late(void *info)
 	first_cpu = get_target_cpu(cpu);
 	if (first_cpu == cpu) {
 		lead_thread = true;
-		err = apply_microcode(cpu);
+		err = apply_microcode(cpu, *type);
 	} else {
 		lead_thread = false;
 		goto wait_for_siblings;
@@ -497,7 +498,7 @@ wait_for_siblings:
 	 */
 	if (!lead_thread) {
 		if (load_both)
-			apply_microcode(cpu);
+			apply_microcode(cpu, *type);
 		else
 			update_cpuinfo_x86(cpu);
 	}
@@ -517,10 +518,11 @@ wait_for_siblings:
  * Reload microcode late on all CPUs. Wait for a sec until they
  * all gather together.
  */
-static int microcode_reload_late(void)
+static int microcode_reload_late(enum reload_type type)
 {
 	int old = boot_cpu_data.microcode, ret;
 	struct cpuinfo_x86 prev_info;
+	enum reload_type args = type;
 
 	atomic_set(&late_cpus_in,  0);
 	atomic_set(&late_cpus_out, 0);
@@ -535,7 +537,7 @@ static int microcode_reload_late(void)
 	mce_in_progress = false;
 	atomic_set(&ucode_updating, 1);
 
-	ret = stop_machine_cpuslocked(__reload_late, NULL, cpu_online_mask);
+	ret = stop_machine_cpuslocked(__reload_late, &args, cpu_online_mask);
 
 	if (mce_in_progress) {
 		pr_warn("MCE occurred while microcode update was in progress\n");
@@ -624,7 +626,7 @@ static ssize_t reload_store_common(struct device *dev,
 		ret = microcode_ops->pre_apply(type);
 
 	if (!ret)
-		ret = microcode_reload_late();
+		ret = microcode_reload_late(type);
 
 	if (microcode_ops->post_apply)
 		microcode_ops->post_apply(type, !ret);
@@ -727,10 +729,54 @@ unlock:
 	return ret;
 }
 
+static int do_rollback(void)
+{
+	int ret = 0;
+
+	if (microcode_ops->pre_apply)
+		ret = microcode_ops->pre_apply(RELOAD_ROLLBACK);
+
+	if (!ret)
+		ret = microcode_reload_late(RELOAD_ROLLBACK);
+
+	if (microcode_ops->post_apply)
+		microcode_ops->post_apply(RELOAD_ROLLBACK, !ret);
+
+	return ret;
+}
+
+static ssize_t rollback_store(struct device *dev,
+			      struct device_attribute *attr,
+			      const char *buf, size_t size)
+{
+	unsigned long val;
+	ssize_t ret;
+
+	ret = kstrtoul(buf, 0, &val);
+	if (ret || val != 1)
+		return -EINVAL;
+
+	cpus_read_lock();
+	ret = check_online_cpus();
+	if (ret)
+		goto unlock;
+
+	mutex_lock(&microcode_mutex);
+	ret = do_rollback();
+	if (!ret)
+		ret = size;
+	mutex_unlock(&microcode_mutex);
+
+unlock:
+	cpus_read_unlock();
+	return ret;
+}
+
 static DEVICE_ATTR_WO(reload);
 static DEVICE_ATTR_WO(reload_nc);
 static DEVICE_ATTR_RO(control);
 static DEVICE_ATTR_RW(commit);
+static DEVICE_ATTR_WO(rollback);
 #endif
 
 static ssize_t version_show(struct device *dev,
@@ -777,7 +823,7 @@ static enum ucode_state microcode_init_cpu(int cpu)
 
 	microcode_ops->collect_cpu_info(cpu, &uci->cpu_sig);
 
-	return apply_microcode(cpu);
+	return apply_microcode(cpu, RELOAD_COMMIT);
 }
 
 /**
@@ -789,7 +835,7 @@ void microcode_bsp_resume(void)
 	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
 
 	if (uci->mc)
-		apply_microcode(cpu);
+		apply_microcode(cpu, RELOAD_COMMIT);
 	else
 		reload_early_microcode(cpu);
 }
@@ -807,7 +853,7 @@ static int mc_cpu_starting(unsigned int cpu)
 
 	microcode_ops->collect_cpu_info(cpu, &uci->cpu_sig);
 
-	err = microcode_ops->apply_microcode(cpu);
+	err = microcode_ops->apply_microcode(cpu, RELOAD_COMMIT);
 
 	pr_debug("%s: CPU%d, err: %d\n", __func__, cpu, err);
 
@@ -868,6 +914,7 @@ static struct attribute *cpu_root_mc_rollback_attrs[] = {
 #ifdef CONFIG_MICROCODE_LATE_LOADING
 	&dev_attr_reload_nc.attr,
 	&dev_attr_commit.attr,
+	&dev_attr_rollback.attr,
 	NULL,
 #endif
 	NULL

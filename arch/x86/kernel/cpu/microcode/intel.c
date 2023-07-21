@@ -928,7 +928,7 @@ static int collect_cpu_info(int cpu_num, struct cpu_signature *csig)
 	return 0;
 }
 
-static enum ucode_state apply_microcode_intel(int cpu)
+static enum ucode_state apply_microcode_intel(int cpu, enum reload_type type)
 {
 	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
 	struct cpuinfo_x86 *c = &cpu_data(cpu);
@@ -956,7 +956,7 @@ static enum ucode_state apply_microcode_intel(int cpu)
 	 * already.
 	 */
 	rev = intel_get_microcode_revision();
-	if (rev >= mc->hdr.rev && !ucode_load_same) {
+	if (rev >= mc->hdr.rev && type != RELOAD_ROLLBACK && !ucode_load_same) {
 		ret = UCODE_OK;
 		goto out;
 	}
@@ -1218,6 +1218,17 @@ static int pre_apply_intel(enum reload_type type)
 		if (ret)
 			return ret;
 		break;
+	case RELOAD_ROLLBACK:
+		if (!mcu_cap.rollback_supported)
+			return -EINVAL;
+
+		if (!committed_ucode) {
+			pr_debug("Rollback: no prior microcode, can't continue...\n");
+			return -ENOENT;
+		}
+
+		unapplied_ucode = committed_ucode;
+		break;
 	default:
 		return -EINVAL;
 	}
@@ -1260,6 +1271,14 @@ static void post_apply_intel(enum reload_type type, bool apply_state)
 			free_ucode_store(&unapplied_ucode);
 		}
 		break;
+	case RELOAD_ROLLBACK:
+		if (apply_state) {
+			free_ucode_store(&applied_ucode);
+			applied_ucode = unapplied_ucode;
+			clear_ucode_store(&unapplied_ucode);
+		}
+		break;
+
 	default:
 		return;
 	}
