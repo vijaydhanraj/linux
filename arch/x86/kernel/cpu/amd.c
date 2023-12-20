@@ -20,6 +20,7 @@
 #include <asm/delay.h>
 #include <asm/debugreg.h>
 #include <asm/resctrl.h>
+#include <asm/sev.h>
 
 #ifdef CONFIG_X86_64
 # include <asm/mmconfig.h>
@@ -585,6 +586,20 @@ static void bsp_init_amd(struct cpuinfo_x86 *c)
 
 	default:
 		break;
+	}
+
+	if (cpu_has(c, X86_FEATURE_SEV_SNP)) {
+		/*
+		 * RMP table entry format is not architectural and it can vary by processor
+		 * and is defined by the per-processor PPR. Restrict SNP support on the
+		 * known CPU model and family for which the RMP table entry format is
+		 * currently defined for.
+		 */
+		if (!(c->x86 == 0x19 && c->x86_model <= 0xaf) &&
+		    !(c->x86 == 0x1a && c->x86_model <= 0xf))
+			setup_clear_cpu_cap(X86_FEATURE_SEV_SNP);
+		else if (!snp_probe_rmptable_info())
+			setup_clear_cpu_cap(X86_FEATURE_SEV_SNP);
 	}
 
 	return;
