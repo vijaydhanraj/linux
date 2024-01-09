@@ -96,7 +96,7 @@ struct kvm_sev_info {
 	atomic_t migration_in_progress;
 	u64 snp_init_flags;
 	void *snp_context;      /* SNP guest context page */
-	u64 sev_features;	/* Features set at VMSA creation */
+	u64 sev_features[SVM_SEV_VMPL_MAX]; /* Features set at VMSA creation */
 };
 
 struct kvm_svm {
