@@ -12,6 +12,7 @@
  */
 #include "misc.h"
 
+#include <linux/mm.h>
 #include <asm/pgtable_types.h>
 #include <asm/sev.h>
 #include <asm/trapnr.h>
@@ -27,6 +28,15 @@
 
 static struct ghcb boot_ghcb_page __aligned(PAGE_SIZE);
 struct ghcb *boot_ghcb;
+
+/*
+ * SVSM related information:
+ *   When running under an SVSM, the VMPL that Linux is executing at must be
+ *   non-zero. The VMPL is therefore used to indicate the presence of an SVSM.
+ */
+static u8 vmpl __section(".data");
+static u64 boot_svsm_caa_pa __section(".data");
+static struct svsm_ca *boot_svsm_caa __section(".data");
 
 /*
  * Copy a version of this function here - insn-eval.c can't be used in
@@ -327,24 +337,6 @@ finish:
 		sev_es_terminate(SEV_TERM_SET_GEN, GHCB_SEV_ES_GEN_REQ);
 }
 
-static bool running_at_vmpl0(void *va)
-{
-	u64 attrs;
-
-	/*
-	 * RMPADJUST modifies RMP permissions of a lesser-privileged (numerically
-	 * higher) privilege level. Here, clear the VMPL1 permission mask of the
-	 * GHCB page. If the guest is not running at VMPL0, this will fail.
-	 *
-	 * If the guest is running at VMPL0, it will succeed. Even if that operation
-	 * modifies permission bits, it is still ok to do so currently because Linux
-	 * SNP guests running at VMPL0 only run at VMPL0, so VMPL1 or higher
-	 * permission mask changes are a don't-care.
-	 */
-	attrs = 1;
-	return !rmpadjust((unsigned long)va, RMP_PG_SIZE_4K, attrs);
-}
-
 /*
  * SNP_FEATURES_IMPL_REQ is the mask of SNP features that will need
  * guest side implementation for proper functioning of the guest. If any
@@ -471,6 +463,13 @@ static bool snp_setup(struct boot_params *bp)
 	 * more details.
 	 */
 	setup_cpuid_table(cc_info);
+
+	/*
+	 * Record the SVSM Calling Area address (CAA) if the guest is not
+	 * running at VMPL0. The CA will be used to communicate with the
+	 * SVSM to perform the SVSM services.
+	 */
+	setup_svsm_ca(cc_info);
 
 	/*
 	 * Pass run-time kernel a pointer to CC info via boot_params so EFI
