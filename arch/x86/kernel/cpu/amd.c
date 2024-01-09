@@ -649,12 +649,16 @@ static void early_detect_mem_encrypt(struct cpuinfo_x86 *c)
 		if (!(msr & MSR_K7_HWCR_SMMLOCK))
 			goto clear_sev;
 
+		if (cpu_has(c, X86_FEATURE_SEV_ES) && cpuid_edx(0x8000001f) <= 1)
+			goto clear_es;
+
 		return;
 
 clear_all:
 		setup_clear_cpu_cap(X86_FEATURE_SME);
 clear_sev:
 		setup_clear_cpu_cap(X86_FEATURE_SEV);
+clear_es:
 		setup_clear_cpu_cap(X86_FEATURE_SEV_ES);
 		setup_clear_cpu_cap(X86_FEATURE_SEV_SNP);
 	}
