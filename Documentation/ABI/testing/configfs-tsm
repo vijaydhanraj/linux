@@ -31,6 +31,21 @@ Description:
 		Standardization v2.03 Section 4.1.8.1 MSG_REPORT_REQ.
 		https://www.amd.com/content/dam/amd/en/documents/epyc-technical-docs/specifications/56421.pdf
 
+What:		/sys/kernel/config/tsm/report/$name/manifestblob
+Date:		January, 2024
+KernelVersion:	v6.9
+Contact:	linux-coco@lists.linux.dev
+Description:
+		(RO) Optional supplemental data that a TSM may emit, visibility
+		of this attribute depends on TSM, and may be empty if no
+		manifest data is available.
+
+		When @provider is "sev_guest" and the "svsm" attribute is set
+		this file contains the service manifest used for the SVSM
+		attestation report from Secure VM Service Module for SEV-SNP
+		Guests v1.00 Section 7.
+		https://www.amd.com/content/dam/amd/en/documents/epyc-technical-docs/specifications/58019.pdf
+
 What:		/sys/kernel/config/tsm/report/$name/provider
 Date:		September, 2023
 KernelVersion:	v6.7
@@ -80,3 +95,43 @@ Contact:	linux-coco@lists.linux.dev
 Description:
 		(RO) Indicates the minimum permissible value that can be written
 		to @privlevel.
+
+What:		/sys/kernel/config/tsm/report/$name/svsm
+Date:		January, 2024
+KernelVersion:	v6.9
+Contact:	linux-coco@lists.linux.dev
+Description:
+		(WO) Attribute is visible if a TSM implementation provider
+		supports the concept of attestation reports for TVMs running
+		under an SVSM, like SEV-SNP. Specifying any non-zero value
+		implies that the attestation report should come from the SVSM.
+		Secure VM Service Module for SEV-SNP Guests v1.00 Section 7.
+		https://www.amd.com/content/dam/amd/en/documents/epyc-technical-docs/specifications/58019.pdf
+
+What:		/sys/kernel/config/tsm/report/$name/service_guid
+Date:		January, 2024
+KernelVersion:	v6.9
+Contact:	linux-coco@lists.linux.dev
+Description:
+		(WO) Attribute is visible if a TSM implementation provider
+		supports the concept of attestation reports for TVMs running
+		under an SVSM, like SEV-SNP. Specifying a empty or null GUID
+		(00000000-0000-0000-0000-000000) requests all active services
+		within the SVSM be part of the attestation report. Specifying
+		a non-null GUID requests an attestation report of just the
+		specified service using the manifest form specified by the
+		service_version attribute.
+		Secure VM Service Module for SEV-SNP Guests v1.00 Section 7.
+		https://www.amd.com/content/dam/amd/en/documents/epyc-technical-docs/specifications/58019.pdf
+
+What:		/sys/kernel/config/tsm/report/$name/service_version
+Date:		January, 2024
+KernelVersion:	v6.9
+Contact:	linux-coco@lists.linux.dev
+Description:
+		(WO) Attribute is visible if a TSM implementation provider
+		supports the concept of attestation reports for TVMs running
+		under an SVSM, like SEV-SNP. Indicates the service manifest
+		version requested for the attestation report.
+		Secure VM Service Module for SEV-SNP Guests v1.00 Section 7.
+		https://www.amd.com/content/dam/amd/en/documents/epyc-technical-docs/specifications/58019.pdf

@@ -783,6 +783,140 @@ struct snp_msg_cert_entry {
 	u32 length;
 };
 
+static int sev_svsm_report_new(struct tsm_report *report, void *data)
+{
+	unsigned int report_len, manifest_len, certificates_len;
+	void *report_blob, *manifest_blob, *certificates_blob;
+	struct svsm_attestation_call attest_call = {};
+	struct tsm_desc *desc = &report->desc;
+	unsigned int size;
+	bool try_again;
+	void *buffer;
+	u64 call_id;
+	int ret;
+
+	/*
+	 * Allocate pages for the request:
+	 * - Report blob (4K)
+	 * - Manifest blob (4K)
+	 * - Certificate blob (16K)
+	 *
+	 * Above addresses must be 4K aligned
+	 */
+	report_len = SZ_4K;
+	manifest_len = SZ_4K;
+	certificates_len = SEV_FW_BLOB_MAX_SIZE;
+
+retry:
+	size = report_len + manifest_len + certificates_len;
+	buffer = alloc_pages_exact(size, __GFP_ZERO);
+	if (!buffer)
+		return -ENOMEM;
+
+	report_blob = buffer;
+	attest_call.report_buffer.pa = __pa(report_blob);
+	attest_call.report_buffer.len = report_len;
+
+	manifest_blob = report_blob + report_len;
+	attest_call.manifest_buffer.pa = __pa(manifest_blob);
+	attest_call.manifest_buffer.len = manifest_len;
+
+	certificates_blob = manifest_blob + manifest_len;
+	attest_call.certificates_buffer.pa = __pa(certificates_blob);
+	attest_call.certificates_buffer.len = certificates_len;
+
+	attest_call.nonce.pa = __pa(desc->inblob);
+	attest_call.nonce.len = desc->inblob_len;
+
+	if (guid_is_null(&desc->service_guid)) {
+		call_id = SVSM_ATTEST_CALL(SVSM_ATTEST_SERVICES);
+	} else {
+		export_guid(attest_call.service_guid, &desc->service_guid);
+		attest_call.service_version = desc->service_version;
+
+		call_id = SVSM_ATTEST_CALL(SVSM_ATTEST_SINGLE_SERVICE);
+	}
+
+	ret = snp_issue_svsm_attestation_request(call_id, &attest_call);
+	switch (ret) {
+	case SVSM_SUCCESS:
+		break;
+	case SVSM_ERR_INVALID_PARAMETER:
+		try_again = false;
+
+		if (attest_call.report_buffer.len > report_len) {
+			report_len = PAGE_ALIGN(attest_call.report_buffer.len);
+			try_again = true;
+		}
+
+		if (attest_call.manifest_buffer.len > manifest_len) {
+			manifest_len = PAGE_ALIGN(attest_call.manifest_buffer.len);
+			try_again = true;
+		}
+
+		if (attest_call.certificates_buffer.len > certificates_len) {
+			certificates_len = PAGE_ALIGN(attest_call.certificates_buffer.len);
+			try_again = true;
+		}
+
+		/* If one of the buffers wasn't large enough, retry the request */
+		if (try_again) {
+			free_pages_exact(buffer, size);
+			goto retry;
+		}
+
+		ret = -EINVAL;
+		goto error;
+	case SVSM_ERR_BUSY:
+		ret = -EAGAIN;
+		goto error;
+	default:
+		pr_err_ratelimited("SVSM attestation request failed (%#x)\n", ret);
+		ret = -EINVAL;
+		goto error;
+	}
+
+	ret = -ENOMEM;
+
+	report_len = attest_call.report_buffer.len;
+	void *rbuf __free(kvfree) = kvzalloc(report_len, GFP_KERNEL);
+	if (!rbuf)
+		goto error;
+
+	memcpy(rbuf, report_blob, report_len);
+	report->outblob = no_free_ptr(rbuf);
+	report->outblob_len = report_len;
+
+	manifest_len = attest_call.manifest_buffer.len;
+	void *mbuf __free(kvfree) = kvzalloc(manifest_len, GFP_KERNEL);
+	if (!mbuf)
+		goto error;
+
+	memcpy(mbuf, manifest_blob, manifest_len);
+	report->manifestblob = no_free_ptr(mbuf);
+	report->manifestblob_len = manifest_len;
+
+	certificates_len = attest_call.certificates_buffer.len;
+	if (!certificates_len)
+		goto success;
+
+	void *cbuf __free(kvfree) = kvzalloc(certificates_len, GFP_KERNEL);
+	if (!cbuf)
+		goto error;
+
+	memcpy(cbuf, certificates_blob, certificates_len);
+	report->auxblob = no_free_ptr(cbuf);
+	report->auxblob_len = certificates_len;
+
+success:
+	ret = 0;
+
+error:
+	free_pages_exact(buffer, size);
+
+	return ret;
+}
+
 static int sev_report_new(struct tsm_report *report, void *data)
 {
 	struct snp_msg_cert_entry *cert_table;
@@ -796,6 +930,9 @@ static int sev_report_new(struct tsm_report *report, void *data)
 
 	if (desc->inblob_len != SNP_REPORT_USER_DATA_SIZE)
 		return -EINVAL;
+
+	if (desc->svsm)
+		return sev_svsm_report_new(report, data);
 
 	void *buf __free(kvfree) = kvzalloc(size, GFP_KERNEL);
 	if (!buf)

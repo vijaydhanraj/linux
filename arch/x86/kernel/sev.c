@@ -2378,6 +2378,56 @@ static int __init init_sev_config(char *str)
 }
 __setup("sev=", init_sev_config);
 
+static void update_attestation_input(struct svsm_call *call, struct svsm_attestation_call *input)
+{
+	/* If (new) lengths have been returned, propograte them up */
+	if (call->rcx_out != call->rcx)
+		input->manifest_buffer.len = call->rcx_out;
+
+	if (call->rdx_out != call->rdx)
+		input->certificates_buffer.len = call->rdx_out;
+
+	if (call->r8_out != call->r8)
+		input->report_buffer.len = call->r8_out;
+}
+
+int snp_issue_svsm_attestation_request(u64 call_id, struct svsm_attestation_call *input)
+{
+	struct svsm_attestation_call *attest_call;
+	struct svsm_call call = {};
+	unsigned long flags;
+	u64 attest_call_pa;
+	int ret;
+
+	if (!vmpl)
+		return -EINVAL;
+
+	local_irq_save(flags);
+
+	call.caa = __svsm_get_caa();
+
+	attest_call = (struct svsm_attestation_call *)call.caa->svsm_buffer;
+	attest_call_pa = __svsm_get_caa_pa() + offsetof(struct svsm_ca, svsm_buffer);
+
+	memcpy(attest_call, input, sizeof(*attest_call));
+
+	/*
+	 * Set input registers for the request and set RDX and R8 to known
+	 * values in order to detect length values being returned in them.
+	 */
+	call.rax = call_id;
+	call.rcx = attest_call_pa;
+	call.rdx = -1;
+	call.r8 = -1;
+	ret = svsm_protocol(&call);
+	update_attestation_input(&call, input);
+
+	local_irq_restore(flags);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(snp_issue_svsm_attestation_request);
+
 int snp_issue_guest_request(u64 exit_code, struct snp_req_data *input, struct snp_guest_request_ioctl *rio)
 {
 	struct ghcb_state state;
