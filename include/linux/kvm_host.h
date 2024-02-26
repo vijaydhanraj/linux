@@ -1324,7 +1324,7 @@ void kvm_vcpu_mark_page_dirty(struct kvm_vcpu *vcpu, gfn_t gfn);
  * @vcpu:	   vCPU to be used for marking pages dirty and to be woken on
  *		   invalidation.
  * @usage:	   indicates if the resulting host physical PFN is used while
- *		   the @vcpu is IN_GUEST_MODE (in which case invalidation of 
+ *		   the @vcpu is IN_GUEST_MODE (in which case invalidation of
  *		   the cache from MMU notifiers---but not for KVM memslot
  *		   changes!---will also force @vcpu to exit the guest and
  *		   refresh the cache); and/or if the PFN used directly
@@ -2438,5 +2438,9 @@ int kvm_arch_gmem_prepare(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn, int max_ord
 #ifdef CONFIG_HAVE_KVM_GMEM_INVALIDATE
 void kvm_arch_gmem_invalidate(kvm_pfn_t start, kvm_pfn_t end);
 #endif
+
+void kvm_arch_vcpu_pre_memory_mapping(struct kvm_vcpu *vcpu);
+int kvm_arch_vcpu_memory_mapping(struct kvm_vcpu *vcpu,
+				 struct kvm_memory_mapping *mapping);
 
 #endif
