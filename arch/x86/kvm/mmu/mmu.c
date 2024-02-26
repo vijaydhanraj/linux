@@ -4343,6 +4343,7 @@ static int __kvm_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 {
 	struct kvm_memory_slot *slot = fault->slot;
 	bool private_fault = fault->is_private;
+	bool force_mmio;
 	bool async;
 
 	/*
@@ -4373,18 +4374,20 @@ static int __kvm_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 	}
 
 	/*
-	 * In some cases SNP guests will make MMIO accesses with the encryption
-	 * bit set. Handle these via the normal MMIO fault path.
+	 * !fault->slot means MMIO for SNP and TDX.  Don't require explicit GPA
+	 * conversion for MMIO because MMIO is assigned at the boot time.  Fall
+	 * to !is_private case to get pfn = KVM_PFN_NOSLOT.
 	 */
-	if (!slot && private_fault && kvm_is_vm_type(vcpu->kvm, KVM_X86_SNP_VM))
-		private_fault = false;
-
-	if (private_fault != kvm_mem_is_private(vcpu->kvm, fault->gfn)) {
+	force_mmio = !slot &&
+		vcpu->kvm->arch.vm_type != KVM_X86_DEFAULT_VM &&
+		vcpu->kvm->arch.vm_type != KVM_X86_SW_PROTECTED_VM;
+	if (!force_mmio &&
+	    private_fault != kvm_mem_is_private(vcpu->kvm, fault->gfn)) {
 		kvm_mmu_prepare_memory_fault_exit(vcpu, fault);
 		return -EFAULT;
 	}
 
-	if (private_fault)
+	if (!force_mmio && private_fault)
 		return kvm_faultin_pfn_private(vcpu, fault);
 
 	async = false;
