@@ -796,8 +796,6 @@ struct sev_data_snp_commit {
 	u32 length;
 } __packed;
 
-#ifdef CONFIG_CRYPTO_DEV_SP_PSP
-
 /**
  * struct sev_platform_init_args
  *
@@ -811,6 +809,7 @@ struct sev_platform_init_args {
 	bool probe;
 };
 
+#ifdef CONFIG_CRYPTO_DEV_SP_PSP
 /**
  * sev_platform_init - perform SEV INIT command
  *
@@ -962,7 +961,8 @@ void snp_free_firmware_page(void *addr);
 static inline int
 sev_platform_status(struct sev_user_data_status *status, int *error) { return -ENODEV; }
 
-static inline int sev_platform_init(int *error) { return -ENODEV; }
+static inline int
+sev_platform_init(struct sev_platform_init_args *args) { return -ENODEV; }
 
 static inline int
 sev_guest_deactivate(struct sev_data_deactivate *data, int *error) { return -ENODEV; }
